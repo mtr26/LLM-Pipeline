@@ -9,7 +9,19 @@ A complete pipeline for training, evaluating, and deploying a Transformer-based 
 - **Mixed Precision Training**: Support for faster training with mixed precision
 - **MLflow Integration**: Track experiments, metrics, and model artifacts
 - **FastAPI Inference Service**: Deploy trained models as a REST API
-- **Git LFS Support**: Efficient storage and versioning of large model files
+- **Docker Support**: Containerized deployment for both CPU and GPU environments
+
+## Model Architecture
+
+The core model is a custom Transformer-based language model implemented in PyTorch. Key components include:
+
+- **Learned Positional Encoding**: Using an Learned Positional Encoding to improve the model's contextual understanding.
+- **Stacked Transformer Blocks**: Each block consists of multi-head self-attention (with Flash Attention for efficiency), RMSNorm normalization, and feed-forward layers.
+- **Flash Attention**: An optimized attention mechanism for faster and more memory-efficient training and inference.
+- **RMSNorm**: Root Mean Square Layer Normalization for improved stability.
+- **Output Layer**: Linear layer projecting to vocabulary size for language modeling tasks.
+
+The model is highly configurable via the Hydra config file, allowing you to set the number of layers, heads, embedding size, and sequence length.
 
 ## Project Structure
 
@@ -47,6 +59,16 @@ To train a model using the default configuration:
 ```bash
 python training.py
 ```
+
+## MLflow Tracking
+
+To see the MLflow metrics, open the MLflow UI by running:
+
+```bash
+mlflow ui --backend-store-uri ./mlruns --default-artifact-root ./mlruns
+```
+
+Navigate to http://localhost:5000 in your browser to view experiments.
 
 ### Configuration
 
@@ -87,34 +109,27 @@ Or generate text without a prompt:
 curl -X POST "http://localhost:8000/generate_text_without_prompt" -H "Content-Type: application/json" -d '{"num_of_token_generated": 100}'
 ```
 
-## Working with Git LFS
+## Docker Usage
 
-This project uses Git LFS to manage large model files. Ensure you have Git LFS installed:
+You can build and run the project in a Docker container for both CPU and GPU environments.
 
-```bash
-git lfs install
+### Build and Run (CPU)
+
+```powershell
+docker build -t llm-pipeline:cpu .
+docker run -p 80:80 llm-pipeline:cpu
 ```
 
-Large files are automatically tracked in `.gitattributes`. If you add new large files:
+### Build and Run (GPU, with CUDA)
 
-```bash
-git lfs track "path/to/large/file"
-git add .gitattributes
-git add path/to/large/file
-git commit -m "Add large file"
-git push
+Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
+
+```powershell
+docker build -t llm-pipeline:gpu --build-arg CUDA_VERSION=gpu .
+docker run --gpus all -p 80:80 llm-pipeline:gpu
 ```
 
-## MLflow Tracking
-
-Model training metrics and artifacts are tracked with MLflow. To view the MLflow UI:
-
-```bash
-mlflow ui
-```
-
-Navigate to http://localhost:5000 in your browser to view experiments.
-
+This will start the FastAPI inference server inside the container, accessible at `http://localhost:80`.
 
 ## License
 

@@ -1,4 +1,4 @@
-from model.model import Transformer
+
 import torch
 from torch.utils.data import Dataset
 from transformers import GPT2Tokenizer
@@ -10,8 +10,13 @@ from omegaconf import DictConfig
 import warnings
 warnings.filterwarnings('ignore')
 import os
+import sys
 
 CURRENT_DIR = os.getcwd()
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+from model.model import Transformer
+
 
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 tokenizer.pad_token = tokenizer.eos_token
@@ -61,7 +66,7 @@ def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: i
     return train_ds, val_ds
 
 # === Main Function ===
-@hydra.main(config_path="config", config_name="config")
+@hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
     run_name = cfg.training.run_name
 
@@ -76,7 +81,7 @@ def main(cfg: DictConfig):
 
     # === Load Dataset ===
     train_ds, val_ds = load_dataset(
-        file_path="input.txt",
+        file_path="train/input.txt",
         train_ratio=cfg.training.train_ratio,
         val_ratio=cfg.training.val_ratio,
         max_length=cfg.model.max_length
@@ -103,7 +108,7 @@ def main(cfg: DictConfig):
     )
     trainer.save_model(
         run_name=run_name, 
-        path=f"{CURRENT_DIR}/{cfg.training.model_path}"
+        path=f"{CURRENT_DIR}/models"
     )
 
 if __name__ == "__main__":

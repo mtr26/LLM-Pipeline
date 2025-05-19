@@ -1,4 +1,4 @@
-from model.model import Transformer
+
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -8,6 +8,12 @@ import tqdm
 from transformers import GPT2Tokenizer
 from torch.amp import autocast, GradScaler
 import math
+import os
+import sys
+
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(parent_dir)
+from model.model import Transformer
 
 class Trainer:
     """
@@ -109,8 +115,6 @@ class Trainer:
         """
         Save the model and log it to MLflow.
         """
-        mlflow.pytorch.log_model(self.model, f"{path}/model_{run_name}", registered_model_name=run_name)
-        print("Model saved to MLflow.")
         torch.save(self.model, f"{path}/model_{run_name}.pth")
         print(f"Model saved to {run_name}.pth")
         
@@ -160,6 +164,8 @@ class Trainer:
                 self.log_metrics(epoch, train_loss, val_loss)
                 if (epoch + 1) % eval_interval == 0:
                     print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                if self.device.type == "cuda":
+                    torch.cuda.empty_cache()
             print("Training complete.")
         return self.model
         

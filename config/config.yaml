@@ -20,7 +20,6 @@ training:
   max_grad_norm: 1.0
   train_ratio: 0.8
   val_ratio: 0.2
-  model_path: "models/basic_lm.pth"
 
 
 # inference settings

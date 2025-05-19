@@ -1,3 +1,1 @@
-models/basic_lm.pth/model_basic_lm_experiment.pth filter=lfs diff=lfs merge=lfs -text
-models/basic_lm.pth/model_basic_lm_experiment/data/model.pth filter=lfs diff=lfs merge=lfs -text
 models/model_basic_lm_experiment.pth filter=lfs diff=lfs merge=lfs -text

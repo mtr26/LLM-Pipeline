@@ -11,12 +11,7 @@ class PositionalEncoding(nn.Module):
         self.pos_embedding = nn.Embedding(max_len, d_model)
 
     def forward(self, x, offset: int = 0):
-        """
-        x:       (B, T, D)
-        offset: number of tokens that have already been processed before this chunk
-        """
         B, T, _ = x.size()
-        # positions  = [offset, offset+1, …, offset+T-1]
         positions = torch.arange(T, device=x.device) + offset
         positions = positions.unsqueeze(0).expand(B, T)
         return x + self.pos_embedding(positions)
@@ -34,7 +29,7 @@ class RMSNorm(nn.Module):
 
 
 class FlashAttention(nn.Module):
-    def __init__(self, num_heads, embed_dim, dropout=0.0):
+    def __init__(self, num_heads: int, embed_dim: int, dropout: int = 0.0):
         super().__init__()
         self.num_heads = num_heads
         self.scaling = embed_dim ** -0.5
@@ -42,7 +37,7 @@ class FlashAttention(nn.Module):
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, past_k=None, past_v=None):
+    def forward(self, x : torch.Tensor, past_k=None, past_v=None):
         B, T_in, D = x.shape
         H, head_dim = self.num_heads, D // self.num_heads
 
@@ -51,7 +46,7 @@ class FlashAttention(nn.Module):
         q, k, v = qkv[...,0,:], qkv[...,1,:], qkv[...,2,:]    # each (B, T_in, H, head_dim)
         q, k, v = [t.permute(0,2,1,3) for t in (q,k,v)]       # now (B, H, T_in, head_dim)
 
-        # append to cache if provided
+
         if past_k is not None:
             k = torch.cat([past_k, k], dim=2)
             v = torch.cat([past_v, v], dim=2)
@@ -59,8 +54,6 @@ class FlashAttention(nn.Module):
         T_q = q.size(2)    # query length
 
         if x.device.type == 'cuda':
-            # you can pass a square mask only if T_q == T_k,
-            # otherwise use is_causal=True instead of attn_mask
             with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
                 attn = F.scaled_dot_product_attention(
                     q, k, v,
@@ -70,49 +63,46 @@ class FlashAttention(nn.Module):
                     scale=self.scaling
                 )
         else:
-            # build a (1,1,T_q,T_k) causal mask
             mask = torch.triu(
                 torch.full((T_q, T_k), -1e9, device=x.device),
                 diagonal=1
-            ).unsqueeze(0).unsqueeze(0)  # (1,1,T_q,T_k)
+            ).unsqueeze(0).unsqueeze(0) 
 
-            scores = torch.matmul(q, k.transpose(-2,-1)) * self.scaling  # (B,H,T_q,T_k)
+            scores = torch.matmul(q, k.transpose(-2,-1)) * self.scaling 
             scores = scores + mask
             weights = F.softmax(scores, dim=-1)
             weights = self.dropout(weights)
-            attn = torch.matmul(weights, v)  # (B,H,T_q,head_dim)
+            attn = torch.matmul(weights, v)
 
-        # reshape back to (B, T_out, D)
-        T_out = attn.size(2)  # = T_q
+        T_out = attn.size(2) 
         attn = attn.permute(0,2,1,3).reshape(B, T_out, D)
 
-        # final projection + return updated kv
         out = self.out_proj(self.dropout(attn))
         return out, (k, v)
     
 
     
 class MLP(nn.Module):
-    def __init__(self, n_embd, dropout=0.1):
+    def __init__(self, n_embd: int, dropout:int = 0.1):
         super(MLP, self).__init__()
         self.w1 = nn.Linear(n_embd, 4 * n_embd, bias=False)
         self.w2 = nn.Linear(4 * n_embd, n_embd, bias=False)
         self.w3 = nn.Linear(n_embd, 4 * n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x : torch.Tensor):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 
 class Block(nn.Module):
-    def __init__(self, n_heads, n_embd, dropout=0.1):
+    def __init__(self, n_heads: int, n_embd: int, dropout : int =0.1):
         super(Block, self).__init__()
         self.attention = FlashAttention(n_heads, n_embd, dropout) 
         self.ff = MLP(n_embd, dropout)
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
 
-    def forward(self, x, cache=None):
+    def forward(self, x: torch.Tensor, cache=None):
         attn_out, present = self.attention(
             self.ln1(x),
             past_k=cache[0] if cache else None,
@@ -129,9 +119,9 @@ class Transformer(nn.Module):
                 n_heads: int, 
                 n_embd: int, 
                 vocab_size: int, 
-                max_len=5000, 
-                dropout=0.1,
-                kv_cacheing=False):
+                max_len:int = 5000, 
+                dropout:int = 0.1,
+                kv_cacheing: bool = False):
         super(Transformer, self).__init__()
         self.embedding = nn.Embedding(vocab_size, n_embd)
         self.positional_encoding = PositionalEncoding(n_embd, max_len)
@@ -157,7 +147,7 @@ class Transformer(nn.Module):
         elif isinstance(module, RMSNorm):
             init.ones_(module.weight)
 
-    def forward(self, x):
+    def forward(self, x : torch.Tensor):
         x = self.embedding(x)
         x = self.positional_encoding(x)
         for block in self.blocks:
@@ -171,50 +161,42 @@ class Transformer(nn.Module):
         return logits
     
     @torch.no_grad()
-    def generate(self, input_ids, max_new_tokens):
+    def generate(self, input_ids : torch.Tensor, max_new_tokens : int):
         """
         Generate new tokens given an input sequence, using KV-caching.
         """
         B, T = input_ids.shape
         device = input_ids.device
 
-        # 1) Build initial caches = list of (past_k, past_v) per layer
         caches = [ (None, None) for _ in range(self.n_layers) ]
 
-        # 2) Run the *entire* input once, filling the caches
         x = self.embedding(input_ids)
         x = self.positional_encoding(x, offset=0)
         for i, block in enumerate(self.blocks):
             if self.kv_cacheing:
                 x, present = block(x, cache=caches[i])
-                caches[i] = present    # store (k, v)
+                caches[i] = present  
             else:
                 x, _ = block(x)
 
-        # 3) Now step‐by‐step generate, reusing caches
         generated = input_ids
         for step in range(max_new_tokens):
-            last_token = generated[:, -1:].to(device)                                # (B,1)
-            offset     = generated.shape[1] - 1                                      # absolute position of this token
+            last_token = generated[:, -1:].to(device)
+            offset     = generated.shape[1] - 1
 
-            # embed + position
             x = self.embedding(last_token)
             x = self.positional_encoding(x, offset=offset)
 
-            # propagate through blocks, updating caches
             for i, block in enumerate(self.blocks):
                 if self.kv_cacheing:
                     x, present = block(x, cache=caches[i])
-                    # concatenate the new k,v onto the cache
-                    # (because block already does torch.cat inside it)
                     caches[i] = present
                 else:
                     x, _ = block(x)
 
-            # final norm & linear → next token
-            x      = self.ln_f(x)
+            x = self.ln_f(x)
             logits = self.fc_out(x)
-            next_token = torch.argmax(logits[:, -1:], dim=-1, keepdim=True)         # (B,1)
-            generated   = torch.cat([generated, next_token.squeeze(0)], dim=1)
+            next_token = torch.argmax(logits[:, -1:], dim=-1, keepdim=True)
+            generated = torch.cat([generated, next_token.squeeze(0)], dim=1)
 
-        return generated  # (B, T + max_new_tokens)
+        return generated
