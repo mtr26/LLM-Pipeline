@@ -64,7 +64,7 @@ class Trainer:
             if self.mixed_precision:
                 with autocast(self.device.type):
                     logits = self.model(input_ids)
-                    loss   = self.criterion(
+                    loss = self.criterion(
                         logits.view(-1, logits.size(-1)),
                         targets.view(-1)
                     )
@@ -72,7 +72,7 @@ class Trainer:
                 scaler.unscale_(self.optimizer)
             else:
                 logits = self.model(input_ids)
-                loss   = self.criterion(
+                loss = self.criterion(
                     logits.view(-1, logits.size(-1)),
                     targets.view(-1)
                 )

@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 # ignore warnings
 import warnings
 warnings.filterwarnings('ignore')
+
 import os
 import sys
 
@@ -16,6 +17,7 @@ CURRENT_DIR = os.getcwd()
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 from model.model import Transformer
+
 
 
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
@@ -54,11 +56,11 @@ def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: i
     tokens = tokenizer.encode(text)
     N = len(tokens)
     train_end = int(train_ratio * N)
-    val_end   = train_end + int(val_ratio * N)
+    val_end = train_end + int(val_ratio * N)
     train_tokens = tokens[:train_end]
-    val_tokens   = tokens[train_end:val_end]
+    val_tokens = tokens[train_end:val_end]
     train_blocks = chunkify(train_tokens, max_length)
-    val_blocks   = chunkify(val_tokens,   max_length)
+    val_blocks = chunkify(val_tokens,   max_length)
     print(f"Train blocks: {len(train_blocks)}, Val blocks: {len(val_blocks)}")
 
     train_ds = BlockDataset(train_blocks)

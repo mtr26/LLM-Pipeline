@@ -25,3 +25,6 @@ training:
 # inference settings
 inference:
   kv_cache: true
+  quantized: false # Only use when CUDA is not available
+  mixed_precision: false # Only use when CUDA is not available
+  model_path: "../models/model_basic_lm_experiment.pth"

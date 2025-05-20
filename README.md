@@ -1,5 +1,8 @@
 # LLM Pipeline
 
+## Project Goal
+This repository is a proof-of-concept end-to-end pipeline for training and deploying Transformer-based language models. It’s designed primarily to build and showcase my machine learning pipeline skills, experiments, and deployment workflows—not as production-grade code.
+
 A complete pipeline for training, evaluating, and deploying a Transformer-based Language Model (LLM) using PyTorch. This project provides an end-to-end solution for language model experimentation with MLflow integration for experiment tracking.
 
 ## Features
@@ -60,7 +63,7 @@ To train a model using the default configuration:
 python training.py
 ```
 
-## MLflow Tracking
+### MLflow Tracking
 
 To see the MLflow metrics, open the MLflow UI by running:
 
@@ -94,7 +97,7 @@ Start the FastAPI inference server:
 
 ```bash
 cd inference
-uvicorn inference:app --reload --host 0.0.0.0 --port 8000
+uvicorn inference:app --reload
 ```
 
 Then, you can send inference requests:
@@ -111,7 +114,7 @@ curl -X POST "http://localhost:8000/generate_text_without_prompt" -H "Content-Ty
 
 ## Docker Usage
 
-You can build and run the project in a Docker container for both CPU and GPU environments.
+You can build and run the project in a Docker container for both CPU and GPU environments. (For inference)
 
 ### Build and Run (CPU)
 
@@ -125,11 +128,38 @@ docker run -p 80:80 llm-pipeline:cpu
 Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
 
 ```powershell
-docker build -t llm-pipeline:gpu --build-arg CUDA_VERSION=gpu .
-docker run --gpus all -p 80:80 llm-pipeline:gpu
+# Build CPU inference image
+docker-compose build inference-cpu
+
+# Run CPU inference
+docker-compose up inference-cpu
+
+# Build GPU inference image
+docker-compose build inference-gpu
+
+# Run GPU inference
+docker-compose up inference-gpu
 ```
 
 This will start the FastAPI inference server inside the container, accessible at `http://localhost:80`.
+
+## Benchmarks
+
+Inference performance benchmarks are available in the `bench/` directory. Below are key results:
+
+![KV-Cache Latency Comparison](bench/kv_cache.png)
+*Figure: Average inference latency with and without key-value cache.*
+
+![Model Throughput Comparison](bench/model_benchmark_comparison.png)
+*Figure: Tokens-per-second throughput comparison across configurations.*
+
+Results summary:
+- **KV-Cache Enabled**: Reduced latency by ~20% and increased throughput by ~15% over baseline.
+
+## Changelog
+- **2025-05-20**: Added separate CPU/GPU Dockerfiles and Docker Compose setup; updated README with benchmark section and project goal.
+- **2025-05-19**: Integrated benchmark scripts and plots under `bench/`.
+- **Earlier**: Expanded model architecture details (Flash Attention, RMSNorm) and Dockerized inference service.
 
 ## License
 

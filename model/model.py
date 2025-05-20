@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
+from torch.amp import autocast
 
 
 class PositionalEncoding(nn.Module):
@@ -29,15 +30,20 @@ class RMSNorm(nn.Module):
 
 
 class FlashAttention(nn.Module):
-    def __init__(self, num_heads: int, embed_dim: int, dropout: int = 0.0):
+    def __init__(self, num_heads: int, embed_dim: int, max_len: int, dropout: int = 0.0, kv_caching: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.scaling = embed_dim ** -0.5
         self.qkv_proj = nn.Linear(embed_dim, 3*embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
+        self.kv_caching = kv_caching
+        self.v_cache = None
+        self.k_cache = None
+        self.max_len = max_len
+        self.cache_index = 0
 
-    def forward(self, x : torch.Tensor, past_k=None, past_v=None):
+    def forward(self, x : torch.Tensor):
         B, T_in, D = x.shape
         H, head_dim = self.num_heads, D // self.num_heads
 
@@ -47,9 +53,36 @@ class FlashAttention(nn.Module):
         q, k, v = [t.permute(0,2,1,3) for t in (q,k,v)]       # now (B, H, T_in, head_dim)
 
 
-        if past_k is not None:
-            k = torch.cat([past_k, k], dim=2)
-            v = torch.cat([past_v, v], dim=2)
+        if self.kv_caching:
+            if self.k_cache is None:
+                # Initialize fresh caches
+                self.k_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
+                self.v_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
+                self.cache_index = 0
+
+            end = self.cache_index + T_in
+            if end <= self.max_len:
+                # write new keys/values into the free region
+                self.k_cache[:, :, self.cache_index:end, :] = k
+                self.v_cache[:, :, self.cache_index:end, :] = v
+                self.cache_index = end
+            else:
+                # roll the buffer left by exactly how many excess tokens we have
+                shift = end - self.max_len
+                # note the three colons to keep B, H, and feature dims in place!
+                self.k_cache = torch.roll(self.k_cache, -shift, dims=2)
+                self.v_cache = torch.roll(self.v_cache, -shift, dims=2)
+                # overwrite the newly freed tail
+                self.k_cache[:, :, -T_in:, :] = k
+                self.v_cache[:, :, -T_in:, :] = v
+                self.cache_index = self.max_len
+
+            # **Here’s the key point**: only attend over the _filled_ portion of the cache,
+            # not the entire max_len of zero padding.
+            k = self.k_cache[:, :, :self.cache_index, :]
+            v = self.v_cache[:, :, :self.cache_index, :]
+
+
         T_k = k.size(2)    # total key/value length
         T_q = q.size(2)    # query length
 
@@ -78,7 +111,7 @@ class FlashAttention(nn.Module):
         attn = attn.permute(0,2,1,3).reshape(B, T_out, D)
 
         out = self.out_proj(self.dropout(attn))
-        return out, (k, v)
+        return out
     
 
     
@@ -95,22 +128,18 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_heads: int, n_embd: int, dropout : int =0.1):
+    def __init__(self, n_heads: int, n_embd: int, max_len: int, dropout: int = 0.1, kv_caching: bool = False):
         super(Block, self).__init__()
-        self.attention = FlashAttention(n_heads, n_embd, dropout) 
+        self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
         self.ff = MLP(n_embd, dropout)
         self.ln1 = RMSNorm(n_embd)
         self.ln2 = RMSNorm(n_embd)
-
-    def forward(self, x: torch.Tensor, cache=None):
-        attn_out, present = self.attention(
-            self.ln1(x),
-            past_k=cache[0] if cache else None,
-            past_v=cache[1] if cache else None
-            )
+        
+    def forward(self, x: torch.Tensor):
+        attn_out = self.attention(self.ln1(x))
         x = x + attn_out
         x = x + self.ff(self.ln2(x))
-        return x, present
+        return x
     
 
 class Transformer(nn.Module):
@@ -121,11 +150,11 @@ class Transformer(nn.Module):
                 vocab_size: int, 
                 max_len:int = 5000, 
                 dropout:int = 0.1,
-                kv_cacheing: bool = False):
+                kv_caching: bool = False):
         super(Transformer, self).__init__()
         self.embedding = nn.Embedding(vocab_size, n_embd)
         self.positional_encoding = PositionalEncoding(n_embd, max_len)
-        self.blocks = nn.Sequential(*[Block(n_heads, n_embd, dropout) for _ in range(n_layers)])
+        self.blocks = nn.Sequential(*[Block(n_heads, n_embd, max_len, dropout, kv_caching) for _ in range(n_layers)])
         self.ln_f = RMSNorm(n_embd)
         self.fc_out = nn.Linear(n_embd, vocab_size)
         self.n_layers = n_layers
@@ -133,7 +162,7 @@ class Transformer(nn.Module):
         self.n_embd = n_embd
         self.vocab_size = vocab_size
         self.max_length = max_len
-        self.kv_cacheing = kv_cacheing
+        self.kv_caching = kv_caching
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -153,9 +182,9 @@ class Transformer(nn.Module):
         for block in self.blocks:
             if self.training:
                 # explicit use_reentrant flag silences the warning too
-                x, _ = checkpoint.checkpoint(block, x, use_reentrant=False)
+                x = checkpoint.checkpoint(block, x, use_reentrant=False)
             else:
-                x, _ = block(x) 
+                x = block(x) 
         x = self.ln_f(x)
         logits = self.fc_out(x)
         return logits
@@ -168,16 +197,10 @@ class Transformer(nn.Module):
         B, T = input_ids.shape
         device = input_ids.device
 
-        caches = [ (None, None) for _ in range(self.n_layers) ]
-
         x = self.embedding(input_ids)
         x = self.positional_encoding(x, offset=0)
         for i, block in enumerate(self.blocks):
-            if self.kv_cacheing:
-                x, present = block(x, cache=caches[i])
-                caches[i] = present  
-            else:
-                x, _ = block(x)
+            x = block(x)
 
         generated = input_ids
         for step in range(max_new_tokens):
@@ -188,11 +211,7 @@ class Transformer(nn.Module):
             x = self.positional_encoding(x, offset=offset)
 
             for i, block in enumerate(self.blocks):
-                if self.kv_cacheing:
-                    x, present = block(x, cache=caches[i])
-                    caches[i] = present
-                else:
-                    x, _ = block(x)
+                x = block(x)
 
             x = self.ln_f(x)
             logits = self.fc_out(x)
@@ -200,3 +219,27 @@ class Transformer(nn.Module):
             generated = torch.cat([generated, next_token.squeeze(0)], dim=1)
 
         return generated
+    
+
+def generate_texts(model, tokenizer, prompts, gen_len=50, temperature=1.0, device='cpu', miwd_precision=False):
+    model.eval()
+    model.to(device)
+    input_ids = tokenizer(prompts, return_tensors='pt', padding=True, truncation=True).input_ids.to(device)
+    generated = input_ids.clone()
+    with torch.no_grad():
+        for _ in range(gen_len):
+            if miwd_precision:
+                with autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(input_ids)
+            else:
+                logits = model(input_ids)
+            next_logits = logits[:, -1, :] / temperature
+            probs = F.softmax(next_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+            generated = torch.cat([generated, next_token], dim=1)
+            if input_ids.size(1) > model.max_length:
+                input_ids = input_ids[:, -model.max_length:]
+    text = tokenizer.decode(generated[0], skip_special_tokens=True)
+    return text
+
