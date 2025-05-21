@@ -4,6 +4,6 @@ mlflow==2.22.0
 mlflow_skinny==2.22.0
 omegaconf==2.3.0
 pydantic==2.11.4
-torch
+torch==2.7.0
 tqdm==4.64.1
 transformers==4.47.1

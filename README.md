@@ -62,7 +62,10 @@ Clone the repository and install the required packages:
 ```bash
 git clone https://github.com/mtr26/LLM-Pipeline.git
 cd LLM-Pipeline
-pip install -r requirements.txt
+# If you're using the CPU
+pip install -r requirementsCPU.txt
+# If you're using CUDA
+pip install -r requirementsGPU.txt
 ```
 
 ## Usage
