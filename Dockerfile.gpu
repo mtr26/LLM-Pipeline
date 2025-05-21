@@ -1,5 +1,5 @@
 # GPU-enabled Dockerfile for LLM-Pipeline inference
-FROM pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
+FROM pytorch/pytorch:2.7.0-cuda11.8-cudnn9-runtime
 
 WORKDIR /code
 
@@ -9,13 +9,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirementsGPU.txt ./
+RUN pip install --no-cache-dir -r requirementsGPU.txt
 
 # Copy project code for inference
 COPY inference/ ./inference
 COPY model/ ./model
-COPY models/ ./models
+COPY models/ ../models
+COPY config/ ../config
 
 # Set GPU environment variable
 ENV CUDA_VISIBLE_DEVICES=0

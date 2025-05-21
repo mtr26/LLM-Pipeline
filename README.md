@@ -130,6 +130,8 @@ Or generate text without a prompt:
 curl -X POST "http://localhost:8000/generate_text_without_prompt" -H "Content-Type: application/json" -d '{"num_of_token_generated": 100}'
 ```
 
+PS: You can also access to the doc using: http://localhost:8000/docs
+
 ## Docker Usage
 
 You can build and run the project in a Docker container for both CPU and GPU environments. (For inference)
@@ -138,6 +140,8 @@ Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
 
 ```powershell
 # Build CPU inference image
+$Env:DOCKER_BUILDKIT=1
+
 docker-compose build inference-cpu
 
 # Run CPU inference
@@ -150,7 +154,7 @@ docker-compose build inference-gpu
 docker-compose up inference-gpu
 ```
 
-This will start the FastAPI inference server inside the container, accessible at `http://localhost:8000`.
+This will start the FastAPI inference server inside the container, accessible at `http://localhost:8000/docs`.
 
 ## Benchmarks
 

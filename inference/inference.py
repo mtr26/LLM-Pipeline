@@ -46,7 +46,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cfg = OmegaConf.load("../config/config.yaml")
 
 model_path = Path(cfg.inference.model_path)
-model = torch.load(model_path, weights_only=False).eval().to(device)
+model = torch.load(model_path, weights_only=False, map_location=device).eval()
 print(f"Loaded model from {model_path}")
 
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')

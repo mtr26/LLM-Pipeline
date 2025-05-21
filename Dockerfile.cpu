@@ -1,19 +1,20 @@
 # CPU-only Dockerfile for LLM-Pipeline inference
-FROM python:3.10-slim
-
+FROM python:3.11-slim
 WORKDIR /code
 
-# Copy requirements and install dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy only requirements and leverage pip cache
+COPY requirementsCPU.txt ./
+RUN pip install --no-cache-dir -r requirementsCPU.txt
+
 
 # Copy project code for inference
 COPY inference/ ./inference
 COPY model/ ./model
-COPY models/ ./models
+COPY models/ ../models
+COPY config/ ../config
 
 # Expose HTTP port for API
 EXPOSE 80
 
 # Launch FastAPI server
-CMD ["uvicorn", "inference.inference:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "inference.inference:app", "--host", 'localhost', "--port", "80"]
