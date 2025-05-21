@@ -3,7 +3,6 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import mlflow
-import mlflow.pytorch
 import tqdm
 from transformers import GPT2Tokenizer
 from torch.amp import autocast, GradScaler
@@ -11,6 +10,8 @@ import math
 import os
 import sys
 
+# TODO: File another way to import the model
+# This is a temporary soloution to import the model, since it is not really a good practice.
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 from model.model import Transformer
@@ -47,7 +48,7 @@ class Trainer:
         self.val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
         self.scaler = GradScaler() if mixed_precision else None
 
-    def train_one_epoch(self, epoch: int) -> float:
+    def train_one_epoch(self) -> float:
         """
         Train the model for one epoch.
         """
@@ -159,7 +160,7 @@ class Trainer:
             mlflow.log_param("n_embd", self.model.n_embd)
             mlflow.log_param("max_length", self.model.max_length)
             for epoch in tqdm.tqdm(range(num_epochs)):        
-                train_loss = self.train_one_epoch(epoch)
+                train_loss = self.train_one_epoch()
                 val_loss  = self.validate()
                 self.log_metrics(epoch, train_loss, val_loss)
                 if (epoch + 1) % eval_interval == 0:

@@ -1,46 +1,58 @@
 # LLM Pipeline
 
-## Project Goal
-This repository is a proof-of-concept end-to-end pipeline for training and deploying Transformer-based language models. It’s designed primarily to build and showcase my machine learning pipeline skills, experiments, and deployment workflows—not as production-grade code.
+A complete pipeline for training, evaluating, and deploying a Language Model (LLM) using PyTorch, MLflow, FastAPI and Docker Compose. 
 
-A complete pipeline for training, evaluating, and deploying a Transformer-based Language Model (LLM) using PyTorch. This project provides an end-to-end solution for language model experimentation with MLflow integration for experiment tracking.
+## Project Goal
+The main goal of this project is to learn how to build a complete end-to-end pipeline for training and deploying large language models (LLMs). This repository can serve as a solid baseline for future projects, since it provides all the essential tools needed to deploy a larger-scale application.
+
+
+
 
 ## Features
 
-- **Custom Transformer Architecture**: Implementation of a transformer model with Flash Attention mechanism
-- **Configurable Training**: Hydra-based configuration for easy parameter management
-- **Mixed Precision Training**: Support for faster training with mixed precision
-- **MLflow Integration**: Track experiments, metrics, and model artifacts
-- **FastAPI Inference Service**: Deploy trained models as a REST API
-- **Docker Support**: Containerized deployment for both CPU and GPU environments
+- **Custom Transformer Architecture**: Implementation of a transformer model with Flash Attention mechanism.
+- **Configurable Training**: Hydra-based configuration for easy parameter management.
+- **Mixed Precision Training**: Support for faster and memory efficient training with mixed precision.
+- **MLflow Integration**: Track experiments and metrics.
+- **FastAPI Inference Service**: Deploy trained models as a REST API using Fast API.
+- **Docker Support**: Containerized deployment for both CPU and GPU environments using Docker Compose.
 
 ## Model Architecture
 
-The core model is a custom Transformer-based language model implemented in PyTorch. Key components include:
+The model is a custom Transformer-based language model implemented in PyTorch. Key components include:
 
 - **Learned Positional Encoding**: Using an Learned Positional Encoding to improve the model's contextual understanding.
-- **Stacked Transformer Blocks**: Each block consists of multi-head self-attention (with Flash Attention for efficiency), RMSNorm normalization, and feed-forward layers.
 - **Flash Attention**: An optimized attention mechanism for faster and more memory-efficient training and inference.
 - **RMSNorm**: Root Mean Square Layer Normalization for improved stability.
-- **Output Layer**: Linear layer projecting to vocabulary size for language modeling tasks.
 
-The model is highly configurable via the Hydra config file, allowing you to set the number of layers, heads, embedding size, and sequence length.
+The model is configurable via the Hydra config file.
 
 ## Project Structure
 
 ```
 LLM-Pipeline/
+├── bench/                # Performance benchmark results
+│   ├── kv_cache.png      # KV caching performance comparison
+│   └── model_benchmark_comparison.png
 ├── config/
 │   └── config.yaml       # Hydra configuration for training and model parameters
 ├── inference/
-│   └── inference.py      # FastAPI service for model inference
+│   ├── __init__.py      
+│   ├── inference.py      # FastAPI service for model inference
+│   └── test.py           # Benchmark and testing utilities
 ├── model/
+│   ├── __init__.py
 │   └── model.py          # Transformer model architecture
 ├── models/               # Saved model weights and artifacts
-│   └── basic_lm.pth/
-├── trainer.py            # Training loop and validation logic
-├── training.py           # Main training script with dataset handling
-└── input.txt             # Sample input text for training
+│   └── model_basic_lm_experiment.pth
+├── train/                # Training related files
+│   ├── __init__.py
+│   ├── trainer.py        # Training loop and validation logic
+│   ├── training.py       # Main training script
+│   └── input.txt         # Sample input text for training
+├── docker-compose.yml    # Docker Compose configuration
+├── Dockerfile.cpu        # CPU-optimized container definition
+└── Dockerfile.gpu        # GPU-enabled container definition
 ```
 
 ## Installation
@@ -91,6 +103,12 @@ The project uses Hydra for configuration management. Key parameters:
   - `train_ratio`: Portion of data to use for training
   - `val_ratio`: Portion of data to use for validation
 
+- **Inference Configuration**
+  - `kv_cache`: Whether to use KV caching or not
+  - `quantized`: Whether to use the quantized model or not
+  - `mixed_precision`: Whether to use mixed precision for inference
+  - `model_path`: Path to the model used for inference
+
 ### Running Inference
 
 Start the FastAPI inference server:
@@ -116,15 +134,6 @@ curl -X POST "http://localhost:8000/generate_text_without_prompt" -H "Content-Ty
 
 You can build and run the project in a Docker container for both CPU and GPU environments. (For inference)
 
-### Build and Run (CPU)
-
-```powershell
-docker build -t llm-pipeline:cpu .
-docker run -p 80:80 llm-pipeline:cpu
-```
-
-### Build and Run (GPU, with CUDA)
-
 Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
 
 ```powershell
@@ -141,7 +150,7 @@ docker-compose build inference-gpu
 docker-compose up inference-gpu
 ```
 
-This will start the FastAPI inference server inside the container, accessible at `http://localhost:80`.
+This will start the FastAPI inference server inside the container, accessible at `http://localhost:8000`.
 
 ## Benchmarks
 
@@ -156,15 +165,6 @@ Inference performance benchmarks are available in the `bench/` directory. Below 
 Results summary:
 - **KV-Cache Enabled**: Reduced latency by ~20% and increased throughput by ~15% over baseline.
 
-## Changelog
-- **2025-05-20**: Added separate CPU/GPU Dockerfiles and Docker Compose setup; updated README with benchmark section and project goal.
-- **2025-05-19**: Integrated benchmark scripts and plots under `bench/`.
-- **Earlier**: Expanded model architecture details (Flash Attention, RMSNorm) and Dockerized inference service.
-
 ## License
 
 [MIT License](LICENSE)
-
-## Contact
-
-- GitHub: [@mtr26](https://github.com/mtr26)

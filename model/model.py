@@ -4,7 +4,9 @@ import torch.nn.init as init
 import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
 from torch.amp import autocast
+from transformers import GPT2Tokenizer
 
+# Since the attention mechanism is quite complex, I did write some notes about it.
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -50,35 +52,40 @@ class FlashAttention(nn.Module):
         # project & split
         qkv = self.qkv_proj(x).view(B, T_in, H, 3, head_dim)
         q, k, v = qkv[...,0,:], qkv[...,1,:], qkv[...,2,:]    # each (B, T_in, H, head_dim)
+        """
+        This section is quite interesting. So let's break it down:
+        The goal is to split qkv into q, k, and v tensors.
+        So the intruction qkv[...,i,:] means thet I'm accessing to the dimention corresponding to the i-th matrix.
+        So qkv[...,0,:] means I'm accessing to the first matrix of the qkv tensor which is the query matrix and so on.
+
+        I personally find this quite interesting since it is a clver way to access the matrices.
+        This is way I used it here so I can remember it and use it in the future.
+        ....
+        """
+
         q, k, v = [t.permute(0,2,1,3) for t in (q,k,v)]       # now (B, H, T_in, head_dim)
 
-
+        # As the name suggests, this is the KV cache part
         if self.kv_caching:
             if self.k_cache is None:
-                # Initialize fresh caches
+                # Initialize caches
                 self.k_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
                 self.v_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
                 self.cache_index = 0
 
             end = self.cache_index + T_in
             if end <= self.max_len:
-                # write new keys/values into the free region
                 self.k_cache[:, :, self.cache_index:end, :] = k
                 self.v_cache[:, :, self.cache_index:end, :] = v
                 self.cache_index = end
             else:
-                # roll the buffer left by exactly how many excess tokens we have
                 shift = end - self.max_len
-                # note the three colons to keep B, H, and feature dims in place!
                 self.k_cache = torch.roll(self.k_cache, -shift, dims=2)
                 self.v_cache = torch.roll(self.v_cache, -shift, dims=2)
-                # overwrite the newly freed tail
                 self.k_cache[:, :, -T_in:, :] = k
                 self.v_cache[:, :, -T_in:, :] = v
                 self.cache_index = self.max_len
 
-            # **Here’s the key point**: only attend over the _filled_ portion of the cache,
-            # not the entire max_len of zero padding.
             k = self.k_cache[:, :, :self.cache_index, :]
             v = self.v_cache[:, :, :self.cache_index, :]
 
@@ -87,6 +94,8 @@ class FlashAttention(nn.Module):
         T_q = q.size(2)    # query length
 
         if x.device.type == 'cuda':
+            # This is flash attention, you can also implement FlashAttention2 or FlashAttention3, or even XFormers
+            # But since this is a simple implementation, I will remain simple and use FlashAttention
             with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
                 attn = F.scaled_dot_product_attention(
                     q, k, v,
@@ -96,6 +105,7 @@ class FlashAttention(nn.Module):
                     scale=self.scaling
                 )
         else:
+            # This is a simple implementation of attention since flash attention is not available on CPU
             mask = torch.triu(
                 torch.full((T_q, T_k), -1e9, device=x.device),
                 diagonal=1
@@ -181,7 +191,6 @@ class Transformer(nn.Module):
         x = self.positional_encoding(x)
         for block in self.blocks:
             if self.training:
-                # explicit use_reentrant flag silences the warning too
                 x = checkpoint.checkpoint(block, x, use_reentrant=False)
             else:
                 x = block(x) 
@@ -221,7 +230,17 @@ class Transformer(nn.Module):
         return generated
     
 
-def generate_texts(model, tokenizer, prompts, gen_len=50, temperature=1.0, device='cpu', miwd_precision=False):
+def generate_texts(
+        model: Transformer,
+        tokenizer: GPT2Tokenizer, 
+        prompts: str, 
+        gen_len:int = 50, 
+        temperature:float = 1.0, 
+        device: str = 'cpu', 
+        miwd_precision: bool = False):
+    """"
+    Generate text using the model.
+    """
     model.eval()
     model.to(device)
     input_ids = tokenizer(prompts, return_tensors='pt', padding=True, truncation=True).input_ids.to(device)

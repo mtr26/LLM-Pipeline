@@ -9,6 +9,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from torch.amp import autocast
 
+"""
+This file is only use for benchmarking the model.
+So it is not a part of the inference pipeline and can be removed
+if not needed.
+"""
+
+
 TOKEN_GENERATED = 2048
 TIMED_RUNS = 30
 

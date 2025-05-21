@@ -3,16 +3,23 @@ from pydantic import BaseModel
 import torch
 import sys
 import os
+
+# ! This is a not really a good practice, but it is a temporary solution to import the model
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from model.model import Transformer, generate_texts
 from transformers import GPT2Tokenizer
-from omegaconf import DictConfig
 from torch.amp import autocast
 from omegaconf import OmegaConf
 from pathlib import Path
 
 print(os.getcwd())
 
+"""
+This file is used for inference and benchmarking the model.
+So it is just a simple API to generate text based on the model.
+As mentioned in each function, please set a limit to the number of tokens generated
+especially if you are using this code for bigger projects.
+"""
 
 
 class TextGenerationRequest(BaseModel):
@@ -34,6 +41,7 @@ class TextGenerationWithoutPromptResponse(BaseModel):
 
 app = FastAPI()
 
+# Load the model and tokenizer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cfg = OmegaConf.load("../config/config.yaml")
 
@@ -61,10 +69,15 @@ if mixed_precision:
 
 @app.post("/generate_text", response_model=TextGenerationResponse)
 async def generate_text(request: TextGenerationRequest):
+    """
+    Generate text based on the provided prompt and number of tokens to generate.
+    Keep in mind that the context length is limited.
+    Also, the model will generate the number of tokens specified in the request,
+    so please set a reasonable number of tokens to generate or a limit to the number of tokens.
+    """
+
     prompt = request.prompt
     num_of_token_generated = request.num_of_token_generated
-
-    # Call the text generation function here
     if mixed_precision:
         with autocast(device_type="cuda", dtype=torch.float16):
             generated_text = generate_texts(
@@ -93,6 +106,11 @@ async def generate_text(request: TextGenerationRequest):
 
 @app.post("/generate_text_without_prompt", response_model=TextGenerationWithoutPromptResponse)
 async def generate_text_without_prompt(request: TextGenerationWithoutPromptRequest):
+    """
+    Generate text without a prompt.
+    This function has the same issues as the previous one.
+    So please set a limit if you use this code for bigger projects.
+    """
     num_of_token_generated = request.num_of_token_generated
 
     # Call the text generation function here

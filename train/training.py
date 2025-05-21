@@ -13,6 +13,8 @@ warnings.filterwarnings('ignore')
 import os
 import sys
 
+# TODO: File another way to import the model
+# Same problem as in the trainer.py file
 CURRENT_DIR = os.getcwd()
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
@@ -24,6 +26,7 @@ tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 tokenizer.pad_token = tokenizer.eos_token
 
 
+# Classic dataloading functions
 def chunkify(token_list, block_size, stride=None):
     if stride is None:
         stride = block_size
