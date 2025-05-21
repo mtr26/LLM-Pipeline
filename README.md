@@ -138,6 +138,8 @@ You can build and run the project in a Docker container for both CPU and GPU env
 
 Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
 
+Warning: These Docker images are very large, so please be cautious.
+
 ```powershell
 # Build CPU inference image
 $Env:DOCKER_BUILDKIT=1
