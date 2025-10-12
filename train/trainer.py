@@ -79,15 +79,7 @@ if __name__ == "__main__":
         dropout=0.1,
     )
 
-    model = REX(
-        n_layers=config.n_layers,
-        n_heads=config.n_heads,
-        n_embd=config.n_embd,
-        vocab_size=config.vocab_size,
-        max_len=config.max_len,
-        dropout=config.dropout,
-    )
-    model.config = config
+    model = REX(config=config)
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
