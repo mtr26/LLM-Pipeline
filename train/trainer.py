@@ -83,7 +83,9 @@ if __name__ == "__main__":
 
     model = REX(config=config)
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
+
+    #data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -107,7 +109,7 @@ if __name__ == "__main__":
         train_dataset=datasets["train"],
         eval_dataset=datasets["validation"],
         tokenizer=tokenizer,
-        data_collator=data_collator
+        #data_collator=data_collator
     )
 
     trainer.train()

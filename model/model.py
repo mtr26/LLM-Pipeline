@@ -266,11 +266,14 @@ class REX(PreTrainedModel):
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None: init.zeros_(module.bias)
+            if module.bias is not None:
+                init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             init.normal_(module.weight, mean=0.0, std=0.02)
-        elif isinstance(module, RMSNorm):
-            init.ones_(module.weight)
+        for name, p in module.named_parameters():
+            if name.endswith('out_proj.weight') or name.endswith('w2.weight'):
+                init.normal_(p, mean=0.0, std=0.02 / (2 * self.config.n_layers)**0.5)
+
 
     def forward(
             self, 
