@@ -22,6 +22,7 @@ class REXConfig(PretrainedConfig):
         n_kv_heads: int = 4,
         n_embd: int = 768,
         dropout: float = 0.1,
+        tie_word_embeddings: bool = True,
         **kwargs
     ):
         self.vocab_size = vocab_size
@@ -31,7 +32,8 @@ class REXConfig(PretrainedConfig):
         self.n_kv_heads = n_kv_heads
         self.n_embd = n_embd
         self.dropout = dropout
-        super().__init__(**kwargs)
+        self.tie_word_embeddings = tie_word_embeddings
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
 
 def scaled_dot_product_attention_grouped_flash(
@@ -261,9 +263,35 @@ class REX(PreTrainedModel):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layers)])
         self.ln_f = RMSNorm(config.n_embd)
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.fc_out.weight = self.embedding.weight
-        self._dynamic_tied_weights_keys = [("fc_out.weight", "embedding.weight")]
         self.post_init()
+
+    def post_init(self):
+        super().post_init()
+        if self.config.tie_word_embeddings:
+            self.tie_weights()
+
+    def get_input_embeddings(self):
+        return self.embedding
+
+    def set_input_embeddings(self, value):
+        self.embedding = value
+
+    def get_output_embeddings(self):
+        return self.fc_out
+
+    def set_output_embeddings(self, value):
+        self.fc_out = value
+
+    def tie_weights(self):
+        if not getattr(self.config, "tie_word_embeddings", False):
+            return
+        super().tie_weights()
+        if not hasattr(self, "_tied_weights_keys") or self._tied_weights_keys is None:
+            self._tied_weights_keys = []
+        for key in ("fc_out\.weight", "embedding\.weight"):
+            if key not in self._tied_weights_keys:
+                self._tied_weights_keys.append(key)
+    
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
