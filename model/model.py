@@ -1,12 +1,86 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.init as init
 import torch.utils.checkpoint as checkpoint
 import torch.nn.functional as F
-from torch.amp import autocast
-from transformers import GPT2Tokenizer
+from torch.nn.attention import SDPBackend
+from typing import Optional, Tuple, List
 
-# Since the attention mechanism is quite complex, I did write some notes about it.
+from transformers import PretrainedConfig, PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+
+class REXConfig(PretrainedConfig):
+    model_type = "REX"
+    def __init__(
+        self,
+        vocab_size: int = 50257,
+        max_len: int = 1024,
+        n_layers: int = 12,
+        n_heads: int = 12,
+        n_kv_heads: int = 4,
+        n_embd: int = 768,
+        dropout: float = 0.1,
+        **kwargs
+    ):
+        self.vocab_size = vocab_size
+        self.max_len = max_len
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.n_embd = n_embd
+        self.dropout = dropout
+        super().__init__(**kwargs)
+
+
+def scaled_dot_product_attention_grouped_flash(
+        queries: torch.Tensor,
+        keys: torch.Tensor, 
+        values: torch.Tensor, 
+        scale: float, 
+        is_causal: bool = False,
+        dropout_p: float = 0.0,
+        mask: torch.Tensor = None
+        ) -> torch.Tensor:
+    """
+    Compute scaled dot-product attention with grouped queries.
+    
+    Args:
+        queries (torch.Tensor): Query tensor of shape (B, T_q, C).
+        keys (torch.Tensor): Key tensor of shape (B, T_k, C).
+        values (torch.Tensor): Value tensor of shape (B, T_v, C).
+        scale (float): Scaling factor for the dot product.
+        
+    Returns:
+        torch.Tensor: Output tensor after applying attention.
+    """
+    q = queries.permute(0, 2, 1, 3)
+    k = keys.permute(0, 2, 1, 3)
+    v = values.permute(0, 2, 1, 3)
+
+    bq, hq, nq, dq = q.shape
+    bk, hk, nk, dk = k.shape
+    bv, hv, nv, dv = v.shape
+
+    repeat = hq // hk
+    k = k.repeat_interleave(repeat, dim=1)  # (B, hq, Tk, d)
+    v = v.repeat_interleave(repeat, dim=1)  # (B, hq, Tv, d)
+
+    with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
+        out = F.scaled_dot_product_attention(
+            query=q,
+            key=k,
+            value=v,
+            attn_mask=mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            scale=scale
+        )
+    out = out.permute(0, 2, 1, 3)
+
+    return out
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -31,100 +105,126 @@ class RMSNorm(nn.Module):
         return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
 
-class FlashAttention(nn.Module):
-    def __init__(self, num_heads: int, embed_dim: int, max_len: int, dropout: int = 0.0, kv_caching: bool = False):
+class GroupedQueryAttention(nn.Module):
+    """
+    Borrowed from my own REX implementation, this is why it also supports cross attention and RoPE.
+    Originally based on the "Return of the Encoder: Maximizing Parameter Efficiency for SLMs" paper.
+    For those interested, I made a little change using RSNorm instead of LayerNorm.
+    """
+    def __init__(self, 
+                dim: int, 
+                k_dim: int, 
+                kv_heads: int, 
+                query_heads: int, 
+                max_length: int, 
+                dropout: int = 0.1, 
+                is_causal: bool = False, 
+                apply_rotary: bool = True
+                ):
         super().__init__()
-        self.num_heads = num_heads
-        self.scaling = embed_dim ** -0.5
-        self.qkv_proj = nn.Linear(embed_dim, 3*embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        assert dim % query_heads == 0, "dim must be divisible by query_heads"
+        self.dim = dim
+        self.kv_heads = kv_heads
+        self.query_heads = query_heads
+        self.is_causal = is_causal
+        self.max_length = max_length
+        kv_dim = (dim // query_heads) * kv_heads
+        
+        self.q_proj = nn.Linear(dim, dim)
+        self.k_proj = nn.Linear(k_dim, kv_dim)
+        self.v_proj = nn.Linear(k_dim, kv_dim)
+
+        self.out_proj = nn.Linear(dim, dim)
         self.dropout = nn.Dropout(dropout)
-        self.kv_caching = kv_caching
-        self.v_cache = None
-        self.k_cache = None
-        self.max_len = max_len
-        self.cache_index = 0
+        self.head_dim = dim // query_heads
 
-    def forward(self, x : torch.Tensor):
-        B, T_in, D = x.shape
-        H, head_dim = self.num_heads, D // self.num_heads
+        self.apply_rotary = apply_rotary
+        self.scale = self.head_dim**-0.5
 
-        # project & split
-        qkv = self.qkv_proj(x).view(B, T_in, H, 3, head_dim)
-        q, k, v = qkv[...,0,:], qkv[...,1,:], qkv[...,2,:]    # each (B, T_in, H, head_dim)
-        """
-        This section is quite interesting. So let's break it down:
-        The goal is to split qkv into q, k, and v tensors.
-        So the intruction qkv[...,i,:] means thet I'm accessing to the dimention corresponding to the i-th matrix.
-        So qkv[...,0,:] means I'm accessing to the first matrix of the qkv tensor which is the query matrix and so on.
+    def rotate_half(self, x):
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
 
-        I personally find this quite interesting since it is a clver way to access the matrices.
-        This is way I used it here so I can remember it and use it in the future.
-        ....
-        """
-
-        q, k, v = [t.permute(0,2,1,3) for t in (q,k,v)]       # now (B, H, T_in, head_dim)
-
-        # As the name suggests, this is the KV cache part
-        if self.kv_caching:
-            if self.k_cache is None:
-                # Initialize caches
-                self.k_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
-                self.v_cache = torch.zeros(B, H, self.max_len, head_dim, device=x.device)
-                self.cache_index = 0
-
-            end = self.cache_index + T_in
-            if end <= self.max_len:
-                self.k_cache[:, :, self.cache_index:end, :] = k
-                self.v_cache[:, :, self.cache_index:end, :] = v
-                self.cache_index = end
-            else:
-                shift = end - self.max_len
-                self.k_cache = torch.roll(self.k_cache, -shift, dims=2)
-                self.v_cache = torch.roll(self.v_cache, -shift, dims=2)
-                self.k_cache[:, :, -T_in:, :] = k
-                self.v_cache[:, :, -T_in:, :] = v
-                self.cache_index = self.max_len
-
-            k = self.k_cache[:, :, :self.cache_index, :]
-            v = self.v_cache[:, :, :self.cache_index, :]
-
-
-        T_k = k.size(2)    # total key/value length
-        T_q = q.size(2)    # query length
-
-        if x.device.type == 'cuda':
-            # This is flash attention, you can also implement FlashAttention2 or FlashAttention3, or even XFormers
-            # But since this is a simple implementation, I will remain simple and use FlashAttention
-            with torch.nn.attention.sdpa_kernel([torch.nn.attention.SDPBackend.FLASH_ATTENTION, torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION]):
-                attn = F.scaled_dot_product_attention(
-                    q, k, v,
-                    attn_mask=None,
-                    dropout_p=self.dropout.p,
-                    is_causal=True,
-                    scale=self.scaling
-                )
-        else:
-            # This is a simple implementation of attention since flash attention is not available on CPU
-            mask = torch.triu(
-                torch.full((T_q, T_k), -1e9, device=x.device),
-                diagonal=1
-            ).unsqueeze(0).unsqueeze(0) 
-
-            scores = torch.matmul(q, k.transpose(-2,-1)) * self.scaling 
-            scores = scores + mask
-            weights = F.softmax(scores, dim=-1)
-            weights = self.dropout(weights)
-            attn = torch.matmul(weights, v)
-
-        T_out = attn.size(2) 
-        attn = attn.permute(0,2,1,3).reshape(B, T_out, D)
-
-        out = self.out_proj(self.dropout(attn))
-        return out
+    def apply_rotary_pos_emb(self, q, k, cos, sin):
+    # Transpose to [B, H, L, D] for RoPE rotation
+        q = q.permute(0, 2, 1, 3)  # [B, H, L, D]
+        k = k.permute(0, 2, 1, 3)  # [B, H_kv, L, D]
     
-
+        # Apply rotary embeddings
+        q_embed = (q * cos) + (self.rotate_half(q) * sin)
+        k_embed = (k * cos) + (self.rotate_half(k) * sin)
     
+        # Transpose back to original layout [B, L, H, D]
+        q_embed = q_embed.permute(0, 2, 1, 3)
+        k_embed = k_embed.permute(0, 2, 1, 3)
+    
+        return q_embed, k_embed
+
+    @torch._dynamo.disable()
+    def generate_sin_cos_pos_emb(self, seq_len, device, rope_theta=10000, rope_factor=8.0):
+        base, rope_factor, dim, max_seq_len = (
+            rope_theta,
+            rope_factor,
+            self.head_dim,
+            self.max_length
+        )
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
+        if rope_factor > 1.0:
+            seq_len_eff = max(seq_len, max_seq_len)
+            base_adjustment = ((rope_factor * seq_len_eff / max_seq_len) - (rope_factor - 1)) ** (dim / (dim - 2))
+            adjusted_base = base * base_adjustment
+            inv_freq = 1.0 / (adjusted_base ** (torch.arange(0, dim, 2, device=device).float() / dim))
+
+        position_ids = torch.arange(seq_len, device=device, dtype=torch.float)
+        if not self.is_causal:
+            position_ids = position_ids - ((seq_len - 1) // 2)
+        freqs = torch.einsum("i,j->ij", position_ids, inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        cos_emb = emb.cos()[None, None, :, :]
+        sin_emb = emb.sin()[None, None, :, :]
+        return cos_emb, sin_emb
+
+    def forward(
+            self,
+            query: torch.Tensor, 
+            key: torch.Tensor, 
+            value: torch.Tensor, 
+            mask: torch.Tensor = None,
+            past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+            use_cache: bool = False,
+        ) -> torch.Tensor:
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
+
+        bq, nq, dq = q.shape
+        bk, nk, dk = k.shape
+        bv, nv, dv = v.shape
+        
+        q = q.view(bq, nq, self.query_heads, dq // self.query_heads)
+        k = k.view(bk, nk, self.kv_heads, dk // self.kv_heads)
+        v = v.view(bv, nv, self.kv_heads, dv // self.kv_heads)
+
+        if self.apply_rotary:
+            cos_emb, sin_emb = self.generate_sin_cos_pos_emb(nq, device=q.device)
+            cos_emb = cos_emb.to(q.device)
+            sin_emb = sin_emb.to(q.device)
+            q, k = self.apply_rotary_pos_emb(q, k, cos_emb, sin_emb)
+
+        if past_kv is not None:
+            pk, pv = past_kv
+            k = torch.cat([pk, k], dim=1)  # (B, T_past+T, kv_heads, head_dim)
+            v = torch.cat([pv, v], dim=1)
+
+        new_kv = (k, v) if use_cache else None
+
+        out = scaled_dot_product_attention_grouped_flash(q, k, v, self.scale, self.is_causal, mask=mask)
+        out = out.reshape(out.size(0), out.size(1), out.size(2) * out.size(3))  # Flatten the heads
+        out = self.out_proj(out)
+        return out, new_kv
+
+
 class MLP(nn.Module):
     def __init__(self, n_embd: int, dropout:int = 0.1):
         super(MLP, self).__init__()
@@ -135,130 +235,113 @@ class MLP(nn.Module):
     def forward(self, x : torch.Tensor):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
-
-
 class Block(nn.Module):
-    def __init__(self, n_heads: int, n_embd: int, max_len: int, dropout: int = 0.1, kv_caching: bool = False):
-        super(Block, self).__init__()
-        self.attention = FlashAttention(n_heads, n_embd, max_len, dropout, kv_caching=kv_caching) 
-        self.ff = MLP(n_embd, dropout)
-        self.ln1 = RMSNorm(n_embd)
-        self.ln2 = RMSNorm(n_embd)
-        
-    def forward(self, x: torch.Tensor):
-        attn_out = self.attention(self.ln1(x))
+    def __init__(self, config: REXConfig):
+        super().__init__()
+        self.attention = GroupedQueryAttention(
+            dim=config.n_embd, k_dim=config.n_embd, 
+            kv_heads=config.n_kv_heads,
+            query_heads=config.n_heads, max_length=config.max_len, 
+            dropout=config.dropout, is_causal=True, apply_rotary=True
+        )
+        self.ff = MLP(config.n_embd, config.dropout)
+        self.ln1, self.ln2 = RMSNorm(config.n_embd), RMSNorm(config.n_embd)
+    def forward(self, x, past_kv=None, use_cache=False):
+        attn_out, new_kv = self.attention(self.ln1(x), self.ln1(x), self.ln1(x), past_kv=past_kv, use_cache=use_cache)
         x = x + attn_out
         x = x + self.ff(self.ln2(x))
-        return x
-    
+        return x, new_kv
 
-class Transformer(nn.Module):
-    def __init__(self,
-                n_layers: int, 
-                n_heads: int, 
-                n_embd: int, 
-                vocab_size: int, 
-                max_len:int = 5000, 
-                dropout:int = 0.1,
-                kv_caching: bool = False):
-        super(Transformer, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, n_embd)
-        self.positional_encoding = PositionalEncoding(n_embd, max_len)
-        self.blocks = nn.Sequential(*[Block(n_heads, n_embd, max_len, dropout, kv_caching) for _ in range(n_layers)])
-        self.ln_f = RMSNorm(n_embd)
-        self.fc_out = nn.Linear(n_embd, vocab_size)
-        self.n_layers = n_layers
-        self.n_heads = n_heads
-        self.n_embd = n_embd
-        self.vocab_size = vocab_size
-        self.max_length = max_len
-        self.kv_caching = kv_caching
-        self.apply(self._init_weights)
+class REX(PreTrainedModel):
+    config_class = REXConfig
+    def __init__(self, config: REXConfig):
+        super().__init__(config)
+        self.config = config
+        self.embedding = nn.Embedding(config.vocab_size, config.n_embd)
+        self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layers)])
+        self.ln_f = RMSNorm(config.n_embd)
+        self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.post_init()
 
     def _init_weights(self, module):
-        """Initialize weights according to module type."""
         if isinstance(module, nn.Linear):
             init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                init.zeros_(module.bias)
+            if module.bias is not None: init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             init.normal_(module.weight, mean=0.0, std=0.02)
         elif isinstance(module, RMSNorm):
             init.ones_(module.weight)
 
-    def forward(self, x : torch.Tensor):
-        x = self.embedding(x)
-        x = self.positional_encoding(x)
-        for block in self.blocks:
+    def forward(
+            self, 
+            input_ids: torch.Tensor,
+            labels: Optional[torch.Tensor] = None,
+            past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+            use_cache: bool = False,
+        ) -> CausalLMOutputWithPast:
+        
+        x = self.embedding(input_ids)
+
+        new_past_key_values = [] if use_cache else None
+        
+        if past_key_values is None:
+            past_key_values = [None] * len(self.blocks)
+
+        for i, block in enumerate(self.blocks):
+            past_kv = past_key_values[i]
             if self.training:
-                x = checkpoint.checkpoint(block, x, use_reentrant=False)
+                x, new_kv = checkpoint.checkpoint(block, x, past_kv, use_cache, use_reentrant=False)
             else:
-                x = block(x) 
+                x, new_kv = block(x, past_kv, use_cache)
+            if use_cache:
+                new_past_key_values.append(new_kv)
         x = self.ln_f(x)
         logits = self.fc_out(x)
-        return logits
-    
-    @torch.no_grad()
-    def generate(self, input_ids : torch.Tensor, max_new_tokens : int):
-        """
-        Generate new tokens given an input sequence, using KV-caching.
-        """
-        B, T = input_ids.shape
-        device = input_ids.device
+        loss = None
+        if labels is not None:
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
-        x = self.embedding(input_ids)
-        x = self.positional_encoding(x, offset=0)
-        for i, block in enumerate(self.blocks):
-            x = block(x)
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=new_past_key_values if use_cache else None,
+        )
 
-        generated = input_ids
-        for step in range(max_new_tokens):
-            last_token = generated[:, -1:].to(device)
-            offset     = generated.shape[1] - 1
-
-            x = self.embedding(last_token)
-            x = self.positional_encoding(x, offset=offset)
-
-            for i, block in enumerate(self.blocks):
-                x = block(x)
-
-            x = self.ln_f(x)
-            logits = self.fc_out(x)
-            next_token = torch.argmax(logits[:, -1:], dim=-1, keepdim=True)
-            generated = torch.cat([generated, next_token.squeeze(0)], dim=1)
-
-        return generated
-    
-
-def generate_texts(
-        model: Transformer,
-        tokenizer: GPT2Tokenizer, 
-        prompts: str, 
-        gen_len:int = 50, 
-        temperature:float = 1.0, 
-        device: str = 'cpu', 
-        miwd_precision: bool = False):
-    """"
-    Generate text using the model.
-    """
+@torch.no_grad()
+def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, top_k=None):
     model.eval()
-    model.to(device)
-    input_ids = tokenizer(prompts, return_tensors='pt', padding=True, truncation=True).input_ids.to(device)
-    generated = input_ids.clone()
-    with torch.no_grad():
-        for _ in range(gen_len):
-            if miwd_precision:
-                with autocast(device_type="cuda", dtype=torch.float16):
-                    logits = model(input_ids)
-            else:
-                logits = model(input_ids)
-            next_logits = logits[:, -1, :] / temperature
-            probs = F.softmax(next_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-            input_ids = torch.cat([input_ids, next_token], dim=1)
-            generated = torch.cat([generated, next_token], dim=1)
-            if input_ids.size(1) > model.max_length:
-                input_ids = input_ids[:, -model.max_length:]
-    text = tokenizer.decode(generated[0], skip_special_tokens=True)
-    return text
+    input_ids = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).input_ids.to(next(model.parameters()).device)
+    
+    past_key_values = None
+    for _ in range(max_length):
+        logits, past_key_values = model(input_ids, use_cache=True, past_key_values=past_key_values)
+        logits = logits[:, -1, :] / temperature
+
+        if top_k is not None:
+            values, indices = torch.topk(logits, top_k)
+            probs = torch.zeros_like(logits).scatter_(1, indices, values)
+            probs = F.softmax(probs, dim=-1)
+        else:
+            probs = F.softmax(logits, dim=-1)
+
+        next_token = torch.multinomial(probs, 1)
+        input_ids = next_token  # only feed last token in next step
+
+    return tokenizer.batch_decode(torch.cat([tokenizer(prompts).input_ids, input_ids], dim=1), skip_special_tokens=True)
+
+
+
+config = REXConfig(
+    vocab_size=50257,
+    max_len=1024,
+    n_layers=2,
+    n_heads=8,
+    n_kv_heads=2,
+    n_embd=128,
+    dropout=0.1
+)
+
 
