@@ -72,12 +72,11 @@ if __name__ == "__main__":
 
     # Take a few samples from the training set
     train_data = datasets["train"].select(range(4))
-    train_data.set_format(type="torch", columns=["input_ids", "labels", "attention_mask"], output_all_columns=True, unsafe=True)
+    train_data = datasets["train"].select(range(4))
 
-    batch = {k: v for k, v in train_data[0].items() if isinstance(v, torch.Tensor)}
-    # Create batch tensors
-    input_ids = torch.stack([d["input_ids"] for d in train_data])
-    labels = torch.stack([d["labels"] for d in train_data])
+# Convert to plain torch tensors manually
+    input_ids = torch.tensor(train_data["input_ids"], dtype=torch.long)
+    labels = torch.tensor(train_data["labels"], dtype=torch.long)
 
     # Handle padding (since you use unk as pad)
     labels[labels == tokenizer.pad_token_id] = -100
