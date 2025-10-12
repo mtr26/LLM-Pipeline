@@ -282,7 +282,7 @@ class REX(PreTrainedModel):
             labels: Optional[torch.Tensor] = None,
             past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
             use_cache: bool = False,
-            **kwargs
+            attention_mask=None
         ) -> CausalLMOutputWithPast:
         
         x = self.embedding(input_ids)
