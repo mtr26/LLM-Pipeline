@@ -15,6 +15,8 @@ def load_and_tokenize_datasets(
 ):
     raw_dataset = load_dataset('json', data_files=dataset_file_path, split='train')
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=False)
+    tokenizer.pad_token = tokenizer.unk_token
+    tokenizer.pad_token_id = tokenizer.unk_token_id
 
     split_dataset = raw_dataset.train_test_split(
         train_size=train_val_ratio,
