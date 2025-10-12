@@ -262,6 +262,7 @@ class REX(PreTrainedModel):
         self.ln_f = RMSNorm(config.n_embd)
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.fc_out.weight = self.embedding.weight
+        self._dynamic_tied_weights_keys = [("fc_out.weight", "embedding.weight")]
         self.post_init()
 
     def _init_weights(self, module):
