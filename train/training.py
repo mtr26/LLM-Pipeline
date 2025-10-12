@@ -1,123 +1,124 @@
-
 import torch
-from torch.utils.data import Dataset
-from transformers import GPT2Tokenizer
+import math
+from model.model import REX, REXConfig
+from transformers import AutoTokenizer, Trainer, TrainingArguments
+from datasets import load_dataset
 import argparse
-from trainer import Trainer
-import hydra
-from omegaconf import DictConfig
-# ignore warnings
-import warnings
-warnings.filterwarnings('ignore')
-
-import os
-import sys
-
-# TODO: File another way to import the model
-# Same problem as in the trainer.py file
-CURRENT_DIR = os.getcwd()
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(parent_dir)
-from model.model import Transformer
 
 
+def load_and_tokenize_datasets(
+    dataset_file_path: str,
+    tokenizer_name: str = "gpt2",
+    max_length: int = 128,
+    train_val_ratio: float = 0.95,
+):
+    raw_dataset = load_dataset('json', data_files=dataset_file_path, split='train')
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=False)
+    tokenizer.pad_token = tokenizer.unk_token
+    tokenizer.pad_token_id = tokenizer.unk_token_id
 
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-tokenizer.pad_token = tokenizer.eos_token
+    split_dataset = raw_dataset.train_test_split(
+        train_size=train_val_ratio,
+        shuffle=True,
+        seed=42
+    )
+    split_dataset['validation'] = split_dataset.pop('test')
 
+    def tokenize_function(examples):
+        return tokenizer(examples["text"], truncation=True, padding=False)
 
-# Classic dataloading functions
-def chunkify(token_list, block_size, stride=None):
-    if stride is None:
-        stride = block_size
-    blocks = []
-    for i in range(0, len(token_list) - block_size, stride):
-        x = token_list[i : i + block_size]
-        y = token_list[i + 1 : i + block_size + 1]
-        blocks.append((x, y))
-    return blocks
-
-class BlockDataset(Dataset):
-    def __init__(self, blocks):
-        self.blocks = blocks
-    def __len__(self):
-        return len(self.blocks)
-    def __getitem__(self, idx):
-        x, y = self.blocks[idx]
-        return torch.tensor(x, dtype=torch.long), torch.tensor(y, dtype=torch.long)
-
-
-# === Loading Dataset ===
-def load_dataset(file_path: str, train_ratio: int, val_ratio: int, max_length: int) -> tuple[Dataset, Dataset]:
-    """
-    Load the dataset from a text file and split it into training and validation sets.
-    """
-    with open(f"{CURRENT_DIR}/{file_path}", 'r', encoding='utf-8') as f:
-        text = f.read()
-    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-    tokenizer.pad_token = tokenizer.eos_token
-    tokens = tokenizer.encode(text)
-    N = len(tokens)
-    train_end = int(train_ratio * N)
-    val_end = train_end + int(val_ratio * N)
-    train_tokens = tokens[:train_end]
-    val_tokens = tokens[train_end:val_end]
-    train_blocks = chunkify(train_tokens, max_length)
-    val_blocks = chunkify(val_tokens,   max_length)
-    print(f"Train blocks: {len(train_blocks)}, Val blocks: {len(val_blocks)}")
-
-    train_ds = BlockDataset(train_blocks)
-    val_ds   = BlockDataset(val_blocks)
-    return train_ds, val_ds
-
-# === Main Function ===
-@hydra.main(config_path="../config", config_name="config")
-def main(cfg: DictConfig):
-    run_name = cfg.training.run_name
-
-    # === Model ===
-    model = Transformer(
-        vocab_size=tokenizer.vocab_size,
-        n_embd=cfg.model.n_embd,
-        n_heads=cfg.model.n_heads,
-        n_layers=cfg.model.n_layers,
-        max_len=cfg.model.max_length
+    tokenized_datasets = split_dataset.map(
+        tokenize_function,
+        batched=True,
+        remove_columns=["text"]
     )
 
-    # === Load Dataset ===
-    train_ds, val_ds = load_dataset(
-        file_path="train/input.txt",
-        train_ratio=cfg.training.train_ratio,
-        val_ratio=cfg.training.val_ratio,
-        max_length=cfg.model.max_length
-    )
+    def group_texts(examples):
+        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        if total_length < max_length:
+            return {}
+        total_length = (total_length // max_length) * max_length
+        result = {
+            k: [t[i:i+max_length] for i in range(0, total_length, max_length)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
 
-    # === Training ===
-    trainer = Trainer(
-        model=model,
-        train_dataset=train_ds,
-        val_dataset=val_ds,
-        learning_rate=cfg.training.lr,
-        tokenizer=tokenizer,
-        batch_size=cfg.training.batch_size,
-        mixed_precision=cfg.training.mixed_precision,
-        T_max=cfg.training.epochs,
-        max_grad_norm=cfg.training.max_grad_norm,
-    )
-
-    trainer.run(
-        num_epochs=cfg.training.epochs, 
-        run_name=run_name, 
-        curent_dir=CURRENT_DIR
-    
-    )
-    trainer.save_model(
-        run_name=run_name, 
-        path=f"{CURRENT_DIR}/models"
-    )
+    lm_datasets = tokenized_datasets.map(group_texts, batched=True)
+    return lm_datasets, tokenizer
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Debug REX model with a small batch.")
+    parser.add_argument("--dataset_file_path", type=str, required=True)
+    parser.add_argument("--tokenizer_name", type=str, default="gpt2")
+    parser.add_argument("--max_length", type=int, default=128)
+    args = parser.parse_args()
+
+    # === CONFIG ===
+    dataset_file_path = args.dataset_file_path
+    tokenizer_name = args.tokenizer_name
+    max_length = args.max_length
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-            
+    # === LOAD DATA ===
+    datasets, tokenizer = load_and_tokenize_datasets(
+        dataset_file_path=dataset_file_path,
+        tokenizer_name=tokenizer_name,
+        max_length=max_length,
+    )
+
+    # Take a few samples from the training set
+    train_data = datasets["train"].select(range(4))
+    train_data.set_format(type="torch", columns=["input_ids", "labels", "attention_mask"], output_all_columns=True, unsafe=True)
+
+    batch = {k: v for k, v in train_data[0].items() if isinstance(v, torch.Tensor)}
+    # Create batch tensors
+    input_ids = torch.stack([d["input_ids"] for d in train_data])
+    labels = torch.stack([d["labels"] for d in train_data])
+
+    # Handle padding (since you use unk as pad)
+    labels[labels == tokenizer.pad_token_id] = -100
+
+    print(f"Batch shape: {input_ids.shape}")
+    print(f"Pad token ID: {tokenizer.pad_token_id}")
+    print(f"Max token ID: {input_ids.max().item()}")
+    print(f"Min token ID: {input_ids.min().item()}")
+
+
+    # === INIT MODEL ===
+    config = REXConfig(
+        vocab_size=tokenizer.vocab_size,
+        max_len=max_length,
+        n_layers=2,        # smaller for debugging
+        n_heads=4,
+        n_kv_heads=2,
+        n_embd=128,
+        dropout=0.1,
+    )
+    model = REX(config).to(device)
+    model.eval()
+
+
+    # === DEBUG FORWARD PASS ===
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids.to(device), labels=labels.to(device))
+
+    logits = outputs.logits
+    loss = outputs.loss
+
+    print(f"\nLoss: {loss.item():.4f}")
+    print(f"Logits shape: {logits.shape}")
+    print(f"Labels shape: {labels.shape}")
+
+    # Count how many tokens are actually contributing to loss
+    mask = labels != -100
+    valid_tokens = mask.sum().item()
+    total_tokens = labels.numel()
+
+    print(f"Valid (non-pad) tokens: {valid_tokens}/{total_tokens} "
+        f"({valid_tokens / total_tokens:.2%})")
+
+    print(f"Perplexity ≈ {math.exp(loss.item()):.2f}")

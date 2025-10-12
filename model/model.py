@@ -261,6 +261,7 @@ class REX(PreTrainedModel):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layers)])
         self.ln_f = RMSNorm(config.n_embd)
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.fc_out.weight = self.embedding.weight
         self.post_init()
 
     def _init_weights(self, module):
@@ -336,16 +337,5 @@ def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, to
 
     return tokenizer.batch_decode(torch.cat([tokenizer(prompts).input_ids, input_ids], dim=1), skip_special_tokens=True)
 
-
-
-config = REXConfig(
-    vocab_size=50257,
-    max_len=1024,
-    n_layers=2,
-    n_heads=8,
-    n_kv_heads=2,
-    n_embd=128,
-    dropout=0.1
-)
 
 
