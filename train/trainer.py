@@ -14,7 +14,7 @@ def load_and_tokenize_datasets(
     train_val_ratio: float = 0.95,
 ):
     raw_dataset = load_dataset('json', data_files=dataset_file_path, split='train')
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=False)
 
     split_dataset = raw_dataset.train_test_split(
         train_size=train_val_ratio,
