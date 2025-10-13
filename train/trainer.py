@@ -100,7 +100,9 @@ if __name__ == "__main__":
         load_best_model_at_end=True,
         metric_for_best_model="loss",
         report_to=["mlflow"],
-        run_name="REX_Pretraining_Run"
+        run_name="REX_Pretraining_Run",
+        torch_compile=True,                      
+        torch_compile_mode="reduce-overhead"
     )
 
     trainer = Trainer(
