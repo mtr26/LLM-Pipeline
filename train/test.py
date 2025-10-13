@@ -1,3 +1,4 @@
+import torch
 from model.model import REXConfig, REX
 
 config = REXConfig(
@@ -12,4 +13,15 @@ config = REXConfig(
 
 model = REX(config)
 
+dummy_input = torch.randint(0, config.vocab_size, (1, 128))  # Batch size of 1, sequence length of 128
+outputs = model(dummy_input)
+
+
 model.save_pretrained("./rex-model")
+
+
+model.from_pretrained("./rex-model")
+
+outputs2 = model(dummy_input)
+
+print((outputs.logits != outputs2.logits).sum())

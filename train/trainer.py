@@ -75,9 +75,9 @@ if __name__ == "__main__":
         vocab_size=tokenizer.vocab_size,
         max_len=args.max_length,
         n_layers=12,
-        n_heads=12,
+        n_heads=16,
         n_kv_heads=4,
-        n_embd=768,
+        n_embd=1024,
         dropout=0.1,
     )
 

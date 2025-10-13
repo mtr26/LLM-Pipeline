@@ -221,21 +221,31 @@ class GroupedQueryAttention(nn.Module):
 
         new_kv = (k, v) if use_cache else None
 
-        out = scaled_dot_product_attention_grouped_flash(q, k, v, self.scale, self.is_causal, mask=mask)
+        out = scaled_dot_product_attention_grouped_flash(
+            q, k, v, 
+            self.scale, 
+            self.is_causal, 
+            mask=mask,
+            dropout_p=self.dropout.p if self.training else 0.0
+            )
         out = out.reshape(out.size(0), out.size(1), out.size(2) * out.size(3))  # Flatten the heads
         out = self.out_proj(out)
+        out = self.dropout(out)
         return out, new_kv
 
 
 class MLP(nn.Module):
-    def __init__(self, n_embd: int, dropout:int = 0.1):
+    def __init__(self, n_embd: int, dropout: float = 0.1):
         super(MLP, self).__init__()
         self.w1 = nn.Linear(n_embd, 4 * n_embd, bias=False)
         self.w2 = nn.Linear(4 * n_embd, n_embd, bias=False)
         self.w3 = nn.Linear(n_embd, 4 * n_embd, bias=False)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x : torch.Tensor):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+    def forward(self, x: torch.Tensor):
+        out = self.w2(F.silu(self.w1(x)) * self.w3(x))
+        out = self.dropout(out)
+        return out
 
 class Block(nn.Module):
     def __init__(self, config: REXConfig):
@@ -247,11 +257,24 @@ class Block(nn.Module):
             dropout=config.dropout, is_causal=True, apply_rotary=True
         )
         self.ff = MLP(config.n_embd, config.dropout)
-        self.ln1, self.ln2 = RMSNorm(config.n_embd), RMSNorm(config.n_embd)
+        self.ln_attn_pre = RMSNorm(config.n_embd)
+        self.ln_attn_post = RMSNorm(config.n_embd)
+        self.ln_ff_pre = RMSNorm(config.n_embd)
+        self.ln_ff_post = RMSNorm(config.n_embd)
+
+        self.dropout = nn.Dropout(config.dropout)
+
     def forward(self, x, past_kv=None, use_cache=False):
-        attn_out, new_kv = self.attention(self.ln1(x), self.ln1(x), self.ln1(x), past_kv=past_kv, use_cache=use_cache)
+        attn_in = self.ln_attn_pre(x)
+        attn_out, new_kv = self.attention(attn_in, attn_in, attn_in, past_kv=past_kv, use_cache=use_cache)
+        attn_out = self.dropout(attn_out)
         x = x + attn_out
-        x = x + self.ff(self.ln2(x))
+        x = self.ln_attn_post(x)
+        ff_in = self.ln_ff_pre(x)
+        ff_out = self.ff(ff_in)
+        ff_out = self.dropout(ff_out)
+        x = x + ff_out
+        x = self.ln_ff_post(x)
         return x, new_kv
 
 class REX(PreTrainedModel):
