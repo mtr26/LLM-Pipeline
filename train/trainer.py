@@ -74,7 +74,7 @@ if __name__ == "__main__":
     config = REXConfig(
         vocab_size=tokenizer.vocab_size,
         max_len=args.max_length,
-        n_layers=12,
+        n_layers=18,
         n_heads=16,
         n_kv_heads=4,
         n_embd=1024,
