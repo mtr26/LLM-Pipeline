@@ -10,8 +10,9 @@ The main goal of this project is to learn how to build a complete end-to-end pip
 
 ## Features
 
-- **Custom Transformer Architecture**: Implementation of a transformer model with Flash Attention mechanism.
-- **Configurable Training**: Hydra-based configuration for easy parameter management.
+- **Custom Transformer Architecture**: Grouped-query attention (GQA), rotary positional embeddings (RoPE), and per-block pre/post RMSNorm backed by PyTorch SDP Flash Attention.
+- **Hugging Face Compatibility**: `REX` subclasses `PreTrainedModel`, supports tied embeddings, and trains cleanly with the Hugging Face `Trainer`.
+- **Configurable Training**: Hydra-based configuration coupled with Transformers TrainingArguments for easy parameter management.
 - **Mixed Precision Training**: Support for faster and memory efficient training with mixed precision.
 - **MLflow Integration**: Track experiments and metrics.
 - **FastAPI Inference Service**: Deploy trained models as a REST API using Fast API.
@@ -19,13 +20,15 @@ The main goal of this project is to learn how to build a complete end-to-end pip
 
 ## Model Architecture
 
-The model is a custom Transformer-based language model implemented in PyTorch. Key components include:
+The model is a custom Transformer-based language model implemented in PyTorch and built to interoperate with Hugging Face tooling. Highlights:
 
-- **Learned Positional Encoding**: Using an Learned Positional Encoding to improve the model's contextual understanding.
-- **Flash Attention**: An optimized attention mechanism for faster and more memory-efficient training and inference.
-- **RMSNorm**: Root Mean Square Layer Normalization for improved stability.
+- **Grouped-Query Attention (GQA)**: Multiple query heads attend over a reduced set of key-value heads for better efficiency at scale.
+- **Rotary Positional Embeddings (RoPE)**: Rotary embeddings are applied inside the attention blocks to preserve relative positioning.
+- **Flash Attention via SDP**: Uses `torch.nn.functional.scaled_dot_product_attention` with SDP Flash kernels for a fused, memory-efficient attention path.
+- **Dual RMSNorm**: Each block applies RMSNorm both before and after attention/MLP (pre/post RSNorm) for improved stability during training.
+- **Tied Embeddings**: Input and output embeddings are tied and fully supported by the Transformers save/load utilities.
 
-The model is configurable via the Hydra config file.
+All architectural hyperparameters are configurable via the Hydra config file.
 
 ## Project Structure
 
@@ -42,14 +45,16 @@ LLM-Pipeline/
 │   └── test.py           # Benchmark and testing utilities
 ├── model/
 │   ├── __init__.py
-│   └── model.py          # Transformer model architecture
-├── models/               # Saved model weights and artifacts
+│   └── model.py          # Hugging Face-compatible Transformer with GQA, RoPE, Flash Attention
+├── models/               # Saved model checkpoints (PyTorch & Hugging Face formats)
 │   └── model_basic_lm_experiment.pth
 ├── train/                # Training related files
 │   ├── __init__.py
-│   ├── trainer.py        # Training loop and validation logic
-│   ├── training.py       # Main training script
+│   ├── trainer.py        # Hugging Face Trainer entry point with MLflow logging
+│   ├── training.py       # Lightweight/debug training utilities
+│   ├── test.py           # Quick save/load smoke tests for the model
 │   └── input.txt         # Sample input text for training
+├── setup.py              # Editable package setup for local installs (pip install -e .)
 ├── docker-compose.yml    # Docker Compose configuration
 ├── Dockerfile.cpu        # CPU-optimized container definition
 └── Dockerfile.gpu        # GPU-enabled container definition
@@ -62,6 +67,8 @@ Clone the repository and install the required packages:
 ```bash
 git clone https://github.com/mtr26/LLM-Pipeline.git
 cd LLM-Pipeline
+# Optional: install the project as an editable package for clean imports
+pip install -e .
 # If you're using the CPU
 pip install -r requirementsCPU.txt
 # If you're using CUDA

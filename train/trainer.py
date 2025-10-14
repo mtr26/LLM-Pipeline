@@ -102,7 +102,8 @@ if __name__ == "__main__":
         report_to=["mlflow"],
         run_name="REX_Pretraining_Run",
         torch_compile=True,                      
-        torch_compile_mode="reduce-overhead"
+        torch_compile_mode="reduce-overhead",
+        
     )
 
     trainer = Trainer(

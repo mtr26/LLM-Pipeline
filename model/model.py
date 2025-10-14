@@ -264,9 +264,9 @@ class Block(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x, past_kv=None, use_cache=False):
+    def forward(self, x, attention_mask=None, past_kv=None, use_cache=False):
         attn_in = self.ln_attn_pre(x)
-        attn_out, new_kv = self.attention(attn_in, attn_in, attn_in, past_kv=past_kv, use_cache=use_cache)
+        attn_out, new_kv = self.attention(attn_in, attn_in, attn_in, past_kv=past_kv, use_cache=use_cache, mask=attention_mask)
         attn_out = self.dropout(attn_out)
         x = x + attn_out
         x = self.ln_attn_post(x)
