@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./model_output")
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--from_pretrained", type=str, default=None)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Pre-training")
@@ -99,11 +100,12 @@ if __name__ == "__main__":
         save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
+        bf16=True,
         report_to=["mlflow"],
         run_name="REX_Pretraining_Run",
         torch_compile=True,                      
         torch_compile_mode="reduce-overhead",
-        
+
     )
 
     trainer = Trainer(
@@ -115,5 +117,7 @@ if __name__ == "__main__":
         #data_collator=data_collator
     )
 
-    trainer.train()
+
+
+    trainer.train(resume_from_checkpoint=args.from_pretrained)
     trainer.save_model(args.output_dir)

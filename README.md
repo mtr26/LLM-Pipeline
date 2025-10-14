@@ -26,7 +26,6 @@ The model is a custom Transformer-based language model implemented in PyTorch an
 - **Rotary Positional Embeddings (RoPE)**: Rotary embeddings are applied inside the attention blocks to preserve relative positioning.
 - **Flash Attention via SDP**: Uses `torch.nn.functional.scaled_dot_product_attention` with SDP Flash kernels for a fused, memory-efficient attention path.
 - **Dual RMSNorm**: Each block applies RMSNorm both before and after attention/MLP (pre/post RSNorm) for improved stability during training.
-- **Tied Embeddings**: Input and output embeddings are tied and fully supported by the Transformers save/load utilities.
 
 All architectural hyperparameters are configurable via the Hydra config file.
 
