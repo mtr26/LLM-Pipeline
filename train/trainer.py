@@ -5,6 +5,9 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, Trainer, TrainingArguments
 from transformers import DataCollatorForLanguageModeling
 from model.model import REXConfig, REX
+from safetensors import safe_open as safetensors_open
+from safetensors.torch import load as safetensors_load
+import torch
 
 
 def load_and_tokenize_datasets(
@@ -83,8 +86,36 @@ if __name__ == "__main__":
     )
 
     if args.model_path:
-        model = REX.from_pretrained(args.model_path, trust_remote_code=True)
-        lr = 5e-6  # Use the learning rate from the checkpoint
+        print(f"Loading REX weights from {args.model_path}")
+        config = REXConfig.from_pretrained(args.model_path)
+        model = REX(config)  # build model with real tensors
+
+        # --- Find checkpoint weights ---
+        sf_path = os.path.join(args.model_path, "model.safetensors")
+
+        if os.path.exists(sf_path):
+            print("Loading weights from .safetensors file...")
+            state_dict = safetensors_load(sf_path, device="cpu")
+        else:
+            # --- Handle sharded checkpoints ---
+            sharded_paths = sorted(
+                [os.path.join(args.model_path, f) for f in os.listdir(args.model_path) if f.startswith("pytorch_model-")]
+            )
+            if len(sharded_paths) > 0:
+                print(f"Loading {len(sharded_paths)} sharded weight files...")
+                state_dict = {}
+                for path in sharded_paths:
+                    chunk = torch.load(path, map_location="cpu")
+                    state_dict.update(chunk)
+            else:
+                raise FileNotFoundError(f"No weight files found in {args.model_path}")
+
+        # --- Load weights ---
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print(f"Loaded model. Missing keys: {len(missing)}, Unexpected: {len(unexpected)}")
+
+        print("Any meta params?", any(p.is_meta for p in model.parameters()))
+        lr = 5e-6
     else:
         model = REX(config=config)
 
