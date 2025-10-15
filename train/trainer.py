@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
     if args.model_path:
         model = REX.from_pretrained(args.model_path, config=config)
-        lr = None  # Use the learning rate from the checkpoint
+        lr = 5e-6  # Use the learning rate from the checkpoint
     else:
         model = REX(config=config)
 
@@ -105,6 +105,7 @@ if __name__ == "__main__":
         load_best_model_at_end=True,
         metric_for_best_model="loss",
         bf16=True,
+        learning_rate=5e-5 if args.model_path is None else lr,
         report_to=["mlflow"],
         run_name="REX_Pretraining_Run",
         torch_compile=True,                      
