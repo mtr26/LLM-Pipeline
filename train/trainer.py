@@ -2,11 +2,12 @@ import os
 import argparse
 import mlflow
 from datasets import load_dataset
+import safetensors
 from transformers import AutoTokenizer, Trainer, TrainingArguments
 from transformers import DataCollatorForLanguageModeling
 from model.model import REXConfig, REX
 from safetensors import safe_open as safetensors_open
-from safetensors.torch import load as safetensors_load
+from safetensors.torch import load_file, load
 import torch
 
 
@@ -95,7 +96,7 @@ if __name__ == "__main__":
 
         if os.path.exists(sf_path):
             print("Loading weights from .safetensors file...")
-            state_dict = safetensors_load(sf_path)
+            state_dict = safetensors.torch.load_file(sf_path, device="cpu")
         else:
             # --- Handle sharded checkpoints ---
             sharded_paths = sorted(
