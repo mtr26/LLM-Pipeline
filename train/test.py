@@ -11,7 +11,6 @@ config = REXConfig(
     dropout=0.1,
 )
 
-model = REX(config)
 
-print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
+model = REX.from_pretrained("rex-test-model", config=config)
 

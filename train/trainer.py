@@ -60,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./model_output")
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--from_pretrained", type=str, default=None)
+    parser.add_argument("--model_path", type=str, default=None)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Pre-training")
@@ -82,7 +82,11 @@ if __name__ == "__main__":
         dropout=0.1,
     )
 
-    model = REX(config=config)
+    if args.model_path:
+        model = REX.from_pretrained(args.model_path, config=config)
+        lr = None  # Use the learning rate from the checkpoint
+    else:
+        model = REX(config=config)
 
     print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
 
@@ -119,5 +123,5 @@ if __name__ == "__main__":
 
 
 
-    trainer.train(resume_from_checkpoint=args.from_pretrained)
+    trainer.train()
     trainer.save_model(args.output_dir)
