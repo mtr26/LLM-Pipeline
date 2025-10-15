@@ -90,6 +90,7 @@ if __name__ == "__main__":
 
     print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
 
+    print("Any meta params?", any(p.is_meta for p in model.parameters()))
     #data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(
