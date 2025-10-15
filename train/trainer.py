@@ -83,7 +83,7 @@ if __name__ == "__main__":
     )
 
     if args.model_path:
-        model = REX.from_pretrained(args.model_path, config=config)
+        model = REX.from_pretrained(args.model_path, trust_remote_code=True)
         lr = 5e-6  # Use the learning rate from the checkpoint
     else:
         model = REX(config=config)
