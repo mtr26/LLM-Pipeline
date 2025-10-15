@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
         if os.path.exists(sf_path):
             print("Loading weights from .safetensors file...")
-            state_dict = safetensors_load(sf_path, device="cpu")
+            state_dict = safetensors_load(sf_path)
         else:
             # --- Handle sharded checkpoints ---
             sharded_paths = sorted(
