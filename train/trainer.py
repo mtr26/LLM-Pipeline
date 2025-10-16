@@ -159,4 +159,4 @@ if __name__ == "__main__":
 
     trainer.train()
     model.save_pretrained(args.output_dir, safe_serialization=False)
-    tokenizer.save_pretrained(args.output_dir)
+    tokenizer.save_pretrained(f"{args.output_dir}/saved")
