@@ -313,6 +313,21 @@ class REX(PreTrainedModel):
         # Only initialize bias if it exists
         if self.fc_out.bias is not None:
             nn.init.zeros_(self.fc_out.bias)
+
+    def save_pretrained(self, save_directory, is_main_process = True, state_dict = None, save_function = torch.save, push_to_hub = False, max_shard_size = "5GB", safe_serialization = False, variant = None, token = None, save_peft_format = True, **kwargs):
+        return super().save_pretrained(
+            save_directory=save_directory,
+            is_main_process=is_main_process,
+            state_dict=state_dict,
+            save_function=save_function,
+            push_to_hub=push_to_hub,
+            max_shard_size=max_shard_size,
+            safe_serialization=False,  # ✅ Force disable safetensors
+            variant=variant,
+            token=token,
+            save_peft_format=save_peft_format,
+            **kwargs
+        )
     
 
     def _init_weights(self, module):

@@ -56,7 +56,7 @@ trainer = Trainer(
         #data_collator=data_collator
     )
 
-trainer.save_model("test_save_model", safe_serialization=False)
+trainer.save_model("test_save_model")
 """
 state_dict = safetensors.torch.load_file(sf_path, device="cpu")
 missing, unexpected = model.load_state_dict(state_dict, strict=False)
