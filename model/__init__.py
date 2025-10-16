@@ -1,1 +1,1 @@
-from .model import REX, REXConfig, MLP
+from .model import REX, REXConfig, MLP, generate_texts

@@ -138,7 +138,7 @@ if __name__ == "__main__":
         load_best_model_at_end=True,
         metric_for_best_model="loss",
         bf16=True,
-        learning_rate=5e-5 if args.model_path is None else lr,
+        learning_rate=5e-6 if args.model_path is None else lr,
         report_to=["mlflow"],
         run_name="REX_Pretraining_Run",
         torch_compile=True,                      
@@ -158,4 +158,5 @@ if __name__ == "__main__":
 
 
     trainer.train()
-    trainer.save_model(args.output_dir)
+    model.save_pretrained(args.output_dir, safe_serialization=False)
+    tokenizer.save_pretrained(args.output_dir)

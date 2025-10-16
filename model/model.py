@@ -308,12 +308,11 @@ class REX(PreTrainedModel):
     def tie_weights(self):
         if not getattr(self.config, "tie_word_embeddings", False):
             return
-        super().tie_weights()
-        if not hasattr(self, "_tied_weights_keys") or self._tied_weights_keys is None:
-            self._tied_weights_keys = []
-        for key in ("fc_out\.weight", "embedding\.weight"):
-            if key not in self._tied_weights_keys:
-                self._tied_weights_keys.append(key)
+        # Tie embeddings
+        self.fc_out.weight = self.embedding.weight
+        # Only initialize bias if it exists
+        if self.fc_out.bias is not None:
+            nn.init.zeros_(self.fc_out.bias)
     
 
     def _init_weights(self, module):
@@ -368,26 +367,37 @@ class REX(PreTrainedModel):
         )
 
 @torch.no_grad()
-def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, top_k=None):
+def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, top_k=50):
     model.eval()
-    input_ids = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).input_ids.to(next(model.parameters()).device)
-    
+    device = next(model.parameters()).device
+
+    inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+    input_ids = inputs.input_ids.to(device)
+
+    generated = input_ids.clone()
     past_key_values = None
+
     for _ in range(max_length):
-        logits, past_key_values = model(input_ids, use_cache=True, past_key_values=past_key_values)
-        logits = logits[:, -1, :] / temperature
+        outputs = model(
+            input_ids=input_ids,
+            use_cache=True,
+            past_key_values=past_key_values
+        )
+        logits = outputs.logits[:, -1, :] / temperature
+        past_key_values = outputs.past_key_values
 
         if top_k is not None:
             values, indices = torch.topk(logits, top_k)
-            probs = torch.zeros_like(logits).scatter_(1, indices, values)
-            probs = F.softmax(probs, dim=-1)
-        else:
-            probs = F.softmax(logits, dim=-1)
+            logits_filtered = torch.full_like(logits, -float('inf'))
+            logits_filtered.scatter_(1, indices, values)
+            logits = logits_filtered
 
-        next_token = torch.multinomial(probs, 1)
-        input_ids = next_token  # only feed last token in next step
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
 
-    return tokenizer.batch_decode(torch.cat([tokenizer(prompts).input_ids, input_ids], dim=1), skip_special_tokens=True)
+        generated = torch.cat((generated, next_token), dim=1)
+        input_ids = next_token
 
-
+    texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
+    return texts
 
