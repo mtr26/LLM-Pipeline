@@ -243,7 +243,7 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor):
-        out = self.w2(F.silu(self.w1(x)) * self.w3(x))
+        out = self.w2(F.silu(self.w1(x)))
         out = self.dropout(out)
         return out
 
@@ -257,24 +257,22 @@ class Block(nn.Module):
             dropout=config.dropout, is_causal=True, apply_rotary=True
         )
         self.ff = MLP(config.n_embd, config.dropout)
-        self.ln_attn_pre = RMSNorm(config.n_embd)
-        self.ln_attn_post = RMSNorm(config.n_embd)
-        self.ln_ff_pre = RMSNorm(config.n_embd)
-        self.ln_ff_post = RMSNorm(config.n_embd)
-
-        self.dropout = nn.Dropout(config.dropout)
+        self.ln_attn = RMSNorm(config.n_embd)
+        self.ln_ff = RMSNorm(config.n_embd)
 
     def forward(self, x, past_kv=None, use_cache=False):
-        attn_in = self.ln_attn_pre(x)
-        attn_out, new_kv = self.attention(attn_in, attn_in, attn_in, past_kv=past_kv, use_cache=use_cache)
-        attn_out = self.dropout(attn_out)
+        attn_input = self.ln_attn(x)
+        attn_out, new_kv = self.attention(
+            query=attn_input, 
+            key=attn_input, 
+            value=attn_input, 
+            past_kv=past_kv, 
+            use_cache=use_cache
+        )
         x = x + attn_out
-        x = self.ln_attn_post(x)
-        ff_in = self.ln_ff_pre(x)
-        ff_out = self.ff(ff_in)
-        ff_out = self.dropout(ff_out)
+        ff_input = self.ln_ff(x)
+        ff_out = self.ff(ff_input)
         x = x + ff_out
-        x = self.ln_ff_post(x)
         return x, new_kv
 
 class REX(PreTrainedModel):
@@ -288,48 +286,6 @@ class REX(PreTrainedModel):
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.post_init()
 
-    def post_init(self):
-        super().post_init()
-        if self.config.tie_word_embeddings:
-            self.tie_weights()
-
-    def get_input_embeddings(self):
-        return self.embedding
-
-    def set_input_embeddings(self, value):
-        self.embedding = value
-
-    def get_output_embeddings(self):
-        return self.fc_out
-
-    def set_output_embeddings(self, value):
-        self.fc_out = value
-
-    def tie_weights(self):
-        if not getattr(self.config, "tie_word_embeddings", False):
-            return
-        # Tie embeddings
-        self.fc_out.weight = self.embedding.weight
-        # Only initialize bias if it exists
-        if self.fc_out.bias is not None:
-            nn.init.zeros_(self.fc_out.bias)
-
-    def save_pretrained(self, save_directory, is_main_process = True, state_dict = None, save_function = torch.save, push_to_hub = False, max_shard_size = "5GB", safe_serialization = False, variant = None, token = None, save_peft_format = True, **kwargs):
-        return super().save_pretrained(
-            save_directory=save_directory,
-            is_main_process=is_main_process,
-            state_dict=state_dict,
-            save_function=save_function,
-            push_to_hub=push_to_hub,
-            max_shard_size=max_shard_size,
-            safe_serialization=False,  # ✅ Force disable safetensors
-            variant=variant,
-            token=token,
-            save_peft_format=save_peft_format,
-            **kwargs
-        )
-    
-
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             init.normal_(module.weight, mean=0.0, std=0.02)
@@ -340,7 +296,6 @@ class REX(PreTrainedModel):
         for name, p in module.named_parameters():
             if name.endswith('out_proj.weight') or name.endswith('w2.weight'):
                 init.normal_(p, mean=0.0, std=0.02 / (2 * self.config.n_layers)**0.5)
-
 
     def forward(
             self, 

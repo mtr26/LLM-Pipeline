@@ -9,7 +9,7 @@ from model.model import REXConfig, REX
 from safetensors import safe_open as safetensors_open
 from safetensors.torch import load_file, load
 import torch
-
+import torch.nn as nn
 
 def load_and_tokenize_datasets(
     dataset_file_path: str,
@@ -86,44 +86,9 @@ if __name__ == "__main__":
         dropout=0.1,
     )
 
-    if args.model_path:
-        print(f"Loading REX weights from {args.model_path}")
-        config = REXConfig.from_pretrained(args.model_path)
-        model = REX(config)  # build model with real tensors
-
-        # --- Find checkpoint weights ---
-        sf_path = os.path.join(args.model_path, "model.safetensors")
-
-        if os.path.exists(sf_path):
-            print("Loading weights from .safetensors file...")
-            state_dict = safetensors.torch.load_file(sf_path, device="cpu")
-        else:
-            # --- Handle sharded checkpoints ---
-            sharded_paths = sorted(
-                [os.path.join(args.model_path, f) for f in os.listdir(args.model_path) if f.startswith("pytorch_model-")]
-            )
-            if len(sharded_paths) > 0:
-                print(f"Loading {len(sharded_paths)} sharded weight files...")
-                state_dict = {}
-                for path in sharded_paths:
-                    chunk = torch.load(path, map_location="cpu")
-                    state_dict.update(chunk)
-            else:
-                raise FileNotFoundError(f"No weight files found in {args.model_path}")
-
-        # --- Load weights ---
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        print(f"Loaded model. Missing keys: {len(missing)}, Unexpected: {len(unexpected)}")
-
-        print("Any meta params?", any(p.is_meta for p in model.parameters()))
-        lr = 5e-6
-    else:
-        model = REX(config=config)
+    model = REX(config=config)
 
     print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
-
-    print("Any meta params?", any(p.is_meta for p in model.parameters()))
-    #data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -133,12 +98,12 @@ if __name__ == "__main__":
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_dir=os.path.join(args.output_dir, "logs"),
-        logging_steps=10,
+        logging_steps=100,
         save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
         bf16=True,
-        learning_rate=5e-6 if args.model_path is None else lr,
+        learning_rate=3e-4,
         report_to=["mlflow"],
         run_name="REX_Pretraining_Run",
         torch_compile=True,                      
@@ -152,7 +117,6 @@ if __name__ == "__main__":
         train_dataset=datasets["train"],
         eval_dataset=datasets["validation"],
         tokenizer=tokenizer,
-        #data_collator=data_collator
     )
 
 
