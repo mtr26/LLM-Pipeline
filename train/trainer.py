@@ -101,6 +101,7 @@ if __name__ == "__main__":
         logging_steps=100,
         save_total_limit=2,
         load_best_model_at_end=True,
+        warmup_steps=5000,
         metric_for_best_model="loss",
         bf16=True,
         learning_rate=3e-4,
