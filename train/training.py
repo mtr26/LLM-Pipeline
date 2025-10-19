@@ -22,7 +22,12 @@ def prepare_finetuning_dataset(
         response = f"\n\n### Response:\n{example['response']}"
 
         full_text = instruction + context + response + tokenizer.eos_token
-        tokenized_full = tokenizer(full_text, max_length=max_length, truncation=True)
+        tokenized_full = tokenizer(
+            full_text,
+            max_length=max_length,
+            truncation=True,
+            padding="max_length"  # <--- THIS IS THE FIX
+        )
 
         prompt_only = instruction + context + "\n\n### Response:\n"
         tokenized_prompt = tokenizer(prompt_only, max_length=max_length, truncation=True)
