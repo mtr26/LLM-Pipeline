@@ -18,15 +18,15 @@ def prepare_finetuning_dataset(
 
     def preprocess_and_mask(example):
         instruction = f"### Instruction:\n{example['instruction']}"
-        context = f"\n\n### Input:\n{example['context']}" if example["context"] else ""
-        response = f"\n\n### Response:\n{example['response']}"
+        context = f"\n\n### Input:\n{example['input']}" if example.get("input") else ""
+        response = f"\n\n### Response:\n{example['output']}"
 
         full_text = instruction + context + response + tokenizer.eos_token
         tokenized_full = tokenizer(
             full_text,
             max_length=max_length,
             truncation=True,
-            padding="max_length"  # <--- THIS IS THE FIX
+            padding="max_length"
         )
 
         prompt_only = instruction + context + "\n\n### Response:\n"
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_length", type=int, default=1024)
     args = parser.parse_args()
 
-    mlflow.set_experiment("REX Dolly15k Fine-tuning")
+    mlflow.set_experiment("REX Fine-tuning")
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     tokenizer.pad_token = tokenizer.unk_token
