@@ -1,5 +1,5 @@
 import torch
-from model.model import REXConfig, REX, generate_texts
+from model.model import REXConfig, REX, generate_texts, generate_texts_no_kv
 from transformers import AutoTokenizer, Trainer, TrainingArguments
 import safetensors
 import os
@@ -9,24 +9,15 @@ tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.3", use_fast=
 tokenizer.pad_token = tokenizer.unk_token
 tokenizer.pad_token_id = tokenizer.unk_token_id
 
-
-config = REXConfig(
-    vocab_size=tokenizer.vocab_size,
-    max_len=1024,
-    n_layers=12,
-    n_heads=12,
-    n_kv_heads=4,
-    n_embd=768,
-    dropout=0.1,
-)
-
-sf_path = "models"
-model = REX(config=config)
-
-model.save_pretrained(sf_path)
-
-print(sum(p.numel() for p in model.parameters()) / 1e6)
-
-model = REX.from_pretrained(sf_path)
+model = REX.from_pretrained("models")
 
 
+while True:
+    prompt = input("Enter a prompt: ")
+    generated_texts = generate_texts_no_kv(
+        model,
+        tokenizer,
+        [prompt],
+        max_length=200
+    )
+    print(f"Generated text: {generated_texts[0]}\n")

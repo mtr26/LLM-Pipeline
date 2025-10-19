@@ -341,22 +341,30 @@ def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, to
     model.eval()
     device = next(model.parameters()).device
 
-    inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
+    # Tokenize without padding for generation
+    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
     input_ids = inputs.input_ids.to(device)
 
+    # Clone to build generated sequences
     generated = input_ids.clone()
     past_key_values = None
 
+    # Track finished sequences if EOS is available
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
+
     for _ in range(max_length):
         outputs = model(
-            input_ids=input_ids,
+            input_ids=input_ids,  # only the last token step by step
             use_cache=True,
             past_key_values=past_key_values
         )
+
         logits = outputs.logits[:, -1, :] / temperature
         past_key_values = outputs.past_key_values
 
-        if top_k is not None:
+        # Top-k filtering
+        if top_k is not None and top_k > 0:
             values, indices = torch.topk(logits, top_k)
             logits_filtered = torch.full_like(logits, -float('inf'))
             logits_filtered.scatter_(1, indices, values)
@@ -365,9 +373,64 @@ def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, to
         probs = F.softmax(logits, dim=-1)
         next_token = torch.multinomial(probs, num_samples=1)
 
+        # Append new token
         generated = torch.cat((generated, next_token), dim=1)
+
+        # Check for EOS
+        if eos_token_id is not None:
+            finished |= (next_token.squeeze(-1) == eos_token_id)
+            if finished.all():
+                break
+
+        # Feed only last token in next iteration
         input_ids = next_token
 
     texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
     return texts
 
+
+@torch.no_grad()
+def generate_texts_no_kv(model, tokenizer, prompts, max_length=50, temperature=1.0, top_k=50):
+    model.eval()
+    device = next(model.parameters()).device
+
+    # Tokenize input
+    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
+    input_ids = inputs.input_ids.to(device)
+
+    # Clone to build output sequences
+    generated = input_ids.clone()
+
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
+
+    for _ in range(max_length):
+        # Run full forward pass each step (no KV caching)
+        outputs = model(input_ids=generated, use_cache=False)
+
+        # Take logits of last token
+        logits = outputs.logits[:, -1, :] / temperature
+
+        # Top-k filtering
+        if top_k is not None and top_k > 0:
+            values, indices = torch.topk(logits, top_k)
+            logits_filtered = torch.full_like(logits, -float("inf"))
+            logits_filtered.scatter_(1, indices, values)
+            logits = logits_filtered
+
+        # Sample next token
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+
+        # Append new token
+        generated = torch.cat((generated, next_token), dim=1)
+
+        # EOS check
+        if eos_token_id is not None:
+            finished |= (next_token.squeeze(-1) == eos_token_id)
+            if finished.all():
+                break
+
+    # Decode generated tokens
+    texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
+    return texts
