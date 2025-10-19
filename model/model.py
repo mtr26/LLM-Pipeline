@@ -409,7 +409,7 @@ def generate_texts_no_kv(model, tokenizer, prompts, max_length=50, temperature=1
         outputs = model(input_ids=generated, use_cache=False)
 
         # Take logits of last token
-        logits = outputs.logits[:, -1, :] / temperature
+        logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
 
         # Top-k filtering
         if top_k is not None and top_k > 0:
