@@ -8,69 +8,81 @@ from model.model import REX
 import torch
 
 
-def prepare_finetuning_dataset(
+def prepare_finetuning_dataset_slimorca(
     dataset_name: str,
     tokenizer: AutoTokenizer,
     max_length: int = 1024,
     test_size: float = 0.10,
 ):
-    # Load Dolly 15k dataset
+    # Load SlimOrca dataset
     dataset = load_dataset(dataset_name, split="train")
 
     def preprocess_and_mask(example):
+        # --- FIX: Parse the 'conversations' list ---
+        system_prompt = ""
+        question = ""
+        response_text = ""
+        for turn in example["conversations"]:
+            if turn.get("from") == "system":
+                system_prompt = turn.get("value", "")
+            elif turn.get("from") == "human":
+                question = turn.get("value", "")
+            elif turn.get("from") == "gpt":
+                response_text = turn.get("value", "")
+        
         # --- Build text template ---
-        instruction = f"### Instruction:\n{example.get('instruction', '').strip()}"
-        context = f"\n\n### Input:\n{example.get('context', '').strip()}" if example.get("context") else ""
-        response = f"\n\n### Response:\n{example.get('response', '').strip()}{tokenizer.eos_token}"
+        instruction = f"### Instruction:\n{question.strip()}"
+        context = f"\n\n### Input:\n{system_prompt.strip()}" if system_prompt else ""
+        response = f"\n\n### Response:\n{response_text.strip()}{tokenizer.eos_token}"
 
-        # Full sequence: instruction + (optional) context + response
         full_text = instruction + context + response
+        prompt_only = instruction + context + "\n\n### Response:\n"
 
-        # --- Tokenize ---
         tokenized_full = tokenizer(
             full_text,
             max_length=max_length,
             truncation=True,
-            padding="max_length"
+            padding=False
+        )
+        tokenized_prompt = tokenizer(
+            prompt_only,
+            max_length=max_length,
+            truncation=True,
+            padding=False
         )
 
-        # Prompt without the answer (so we can mask its loss)
-        prompt_only = instruction + context + "\n\n### Response:\n"
-        tokenized_prompt = tokenizer(prompt_only, max_length=max_length, truncation=True)
-
-        # --- Mask labels ---
         labels = copy.deepcopy(tokenized_full["input_ids"])
         prompt_len = len(tokenized_prompt["input_ids"])
-        labels[:prompt_len] = [-100] * prompt_len  # Ignore loss before response
-
+        labels[:prompt_len] = [-100] * prompt_len
         tokenized_full["labels"] = labels
+
         return tokenized_full
 
-    # Preprocess dataset
+    # Preprocess the dataset
     processed_dataset = dataset.map(
         preprocess_and_mask,
         remove_columns=dataset.column_names,
-        desc="Tokenizing and masking Dolly 15k"
+        desc="Tokenizing and masking SlimOrca"
     )
 
-    # Split into train/test
+    # Train/test split
     split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=42)
     return split_dataset
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
+    parser = argparse.ArgumentParser(description="Fine-tune REX model on SlimOrca.")
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--dataset_name", type=str, default="databricks/databricks-dolly-15k")
+    parser.add_argument("--dataset_name", type=str, default="Open-Orca/SlimOrca")
     parser.add_argument("--tokenizer_name", type=str, default="gpt2")
-    parser.add_argument("--output_dir", type=str, default="./dolly15k_rex_finetuned")
+    parser.add_argument("--output_dir", type=str, default="./slimorca_rex_finetuned")
     parser.add_argument("--num_epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=5e-5)
     parser.add_argument("--max_length", type=int, default=1024)
     args = parser.parse_args()
 
-    mlflow.set_experiment("REX Fine-tuning")
+    mlflow.set_experiment("REX Fine-tuning on SlimOrca")
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
     tokenizer.pad_token = tokenizer.unk_token
@@ -79,7 +91,7 @@ if __name__ == "__main__":
     model = REX.from_pretrained(args.model_path)
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    datasets = prepare_finetuning_dataset(
+    datasets = prepare_finetuning_dataset_slimorca(
         dataset_name=args.dataset_name,
         tokenizer=tokenizer,
         max_length=args.max_length,
