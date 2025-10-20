@@ -110,6 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=5e-5)
     parser.add_argument("--max_length", type=int, default=1024)
+    parser.add_argument("--max_steps", type=int, default=10000)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Fine-tuning on SlimOrca")
@@ -135,8 +136,11 @@ if __name__ == "__main__":
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.learning_rate,
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        max_steps=args.max_steps,
+        eval_strategy="steps",
+        eval_steps=500,
+        save_strategy="steps",
+        save_steps=500,
         save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
@@ -149,7 +153,7 @@ if __name__ == "__main__":
         torch_compile_mode="reduce-overhead",
         remove_unused_columns=False,
         report_to=["mlflow"],
-        run_name="REX_Dolly15k_FineTuning",
+        run_name="REX_Continued_FineTuning",
     )
 
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
