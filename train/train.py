@@ -70,6 +70,36 @@ def prepare_finetuning_dataset_slimorca(
     return split_dataset
 
 
+def custom_data_collator(features):
+    """
+    Custom collator that pads input_ids with pad_token_id and labels with -100.
+    """
+    # Find the longest sequence in the batch
+    max_length = max(len(f["input_ids"]) for f in features)
+        
+    input_ids_padded = []
+    labels_padded = []
+    attention_mask = []
+
+    for f in features:
+        # How many padding tokens are needed for this sequence
+        pad_length = max_length - len(f["input_ids"])
+        # Pad 'input_ids' with the tokenizer's pad token ID
+        input_ids_padded.append(f["input_ids"] + [tokenizer.pad_token_id] * pad_length)
+
+        # Pad 'labels' with -100 so they are ignored by the loss function
+        labels_padded.append(f["labels"] + [-100] * pad_length)
+
+        # Create the attention mask (1 for real tokens, 0 for padding)
+        attention_mask.append([1] * len(f["input_ids"]) + [0] * pad_length)
+
+    # Convert lists to tensors for the model
+    return {
+        "input_ids": torch.tensor(input_ids_padded, dtype=torch.long),
+        "labels": torch.tensor(labels_padded, dtype=torch.long),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+    }
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on SlimOrca.")
     parser.add_argument("--model_path", type=str, required=True)
@@ -130,7 +160,7 @@ if __name__ == "__main__":
         train_dataset=datasets["train"],
         eval_dataset=datasets["test"],
         tokenizer=tokenizer,
-        data_collator=data_collator,
+        data_collator=custom_data_collator,
     )
 
     trainer.train()
