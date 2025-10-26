@@ -2,29 +2,28 @@
 defaults:
   - override hydra/job_logging: disabled
 
+# NOTE: the term "mixed_precision" might be unclear, it actually refers to fp16 and not bf16.
+
 # model hyperparameters
 model:
-  model_name: BasicLM
-  n_layers: 4
-  n_heads: 4
-  n_embd: 256
-  max_length: 128
+  model_name: REX_v0.1
 
 # training settings
 training:
   run_name: "basic_lm_experiment"
-  batch_size: 64
-  lr: 1e-3
-  epochs: 100
-  mixed_precision: true
-  max_grad_norm: 1.0
-  train_ratio: 0.8
+  dataset_file_path: "your/path/to/the/jsonl/file"
+  tokenizer_name: "REX_v0.1"
+  max_length: 1024
+  train_val_ratio: 0.95
+  output_dir: "./out"
+  num_epochs: 2 # Learning phase + checking epoch
+  batch_size: 16 # Really depends on the device, e.g 16 would work on a L4.
   val_ratio: 0.2
 
 
 # inference settings
 inference:
-  kv_cache: true
-  quantized: false # Only use when CUDA is not available
-  mixed_precision: false # Only use when CUDA is not available
+  kv_cache: false # for now leave it false, because of some bugs. (Read model.py for more information)
+  quantized: false # You can turn this on, it is supported. However, it may lead to worse results for now (waiting for RLHF later).
+  mixed_precision: true # fp16 inference, is supported, but for bf16, you might need to go to the inference file and change it yourself, since I judge that very few people have bf16 devices.
   model_path: "../models/model_basic_lm_experiment.pth"

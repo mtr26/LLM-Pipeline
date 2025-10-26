@@ -7,7 +7,13 @@ from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollator
 from model.model import REX
 import torch
 
-
+"""
+This script can be used to fine-tune a pre-trained REX model on the Dolly 15k dataset.
+We can adapt this script to fine-tune REX on any instruction-following dataset by changing the preprocessing function.
+Keep in mind that dolly 15k is a small dataset, the real model was fine tuned on Alpaca and then SlimOrca.
+Technically you can use accelerate along with TPUs or multi-GPU setups to fine-tune bigger models.
+But because of argparse I would not recommend using this script with accelerate launch.
+"""
 def prepare_finetuning_dataset(
     dataset_name: str,
     tokenizer: AutoTokenizer,
@@ -17,6 +23,7 @@ def prepare_finetuning_dataset(
     dataset = load_dataset(dataset_name, split="train")
 
     def preprocess_and_mask(example):
+        # Interesting format but this is a actually really working.
         instruction = f"### Instruction:\n{example['instruction']}"
         context = f"\n\n### Input:\n{example['input']}" if example.get("input") else ""
         response = f"\n\n### Response:\n{example['output']}"
@@ -44,6 +51,10 @@ def prepare_finetuning_dataset(
     return split_dataset
 
 
+
+"""
+Same as pretrain.py, argparse was prefered here.
+"""
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
     parser.add_argument("--model_path", type=str, required=True)
@@ -71,6 +82,7 @@ if __name__ == "__main__":
         max_length=args.max_length,
     )
 
+    # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
     training_args = TrainingArguments(

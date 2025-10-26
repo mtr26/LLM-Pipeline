@@ -3,16 +3,10 @@ from pydantic import BaseModel
 import torch
 import sys
 import os
-
-# ! This is a not really a good practice, but it is a temporary solution to import the model
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from model.model import Transformer, generate_texts
-from transformers import GPT2Tokenizer
+from model.model import REX, generate_texts
 from torch.amp import autocast
 from omegaconf import OmegaConf
-from pathlib import Path
-
-print(os.getcwd())
+from transformers import AutoTokenizer
 
 """
 This file is used for inference and benchmarking the model.
@@ -24,11 +18,13 @@ especially if you are using this code for bigger projects.
 
 class TextGenerationRequest(BaseModel):
     prompt: str
+    constext: str = ""
     num_of_token_generated: int
 
 class TextGenerationResponse(BaseModel):
     generated_text: str
     prompt: str
+    context: str
     num_of_token_generated: int
 
 class TextGenerationWithoutPromptRequest(BaseModel):
@@ -45,27 +41,36 @@ app = FastAPI()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cfg = OmegaConf.load("../config/config.yaml")
 
-model_path = Path(cfg.inference.model_path)
-model = torch.load(model_path, weights_only=False, map_location=device).eval()
-print(f"Loaded model from {model_path}")
+if cfg.inference.quantized:
+    if device != torch.device("cuda"):
+        model = REX.from_pretrained(cfg.model_name, load_in_8bit=True)
+        model.to(device)
+    else:
+        model = torch.quantization.quantize_dynamic(
+            REX.from_pretrained(cfg.model_name),
+            {torch.nn.Linear},
+            dtype=torch.qint8
+        )
+        model.to(device)
+else:
+    model = REX.from_pretrained(cfg.model_name)
+    model.to(device)
+    
+    if cfg.inference.mixed_precision:
+        model = model.half()
+        
 
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-tokenizer.pad_token = tokenizer.eos_token
+model = REX.from_pretrained(cfg.model_name)
+tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
+
+
+
 
 if cfg.inference.kv_cache:
-    model.kv_caching = True
+    # Technically the model can use KV caching, but right now I am getting attention junk values, so I truned off this feature for now.
+    pass
 
-if cfg.inference.quantized and device != torch.device("cpu"):
-    raise ValueError("Quantization only supported on CPU")
-elif cfg.inference.quantized:
-    model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
-
-mixed_precision = cfg.inference.mixed_precision
-if mixed_precision:
-    model = model.half()
  
-
-
 
 @app.post("/generate_text", response_model=TextGenerationResponse)
 async def generate_text(request: TextGenerationRequest):
@@ -76,65 +81,50 @@ async def generate_text(request: TextGenerationRequest):
     so please set a reasonable number of tokens to generate or a limit to the number of tokens.
     """
 
+    context = request.context
     prompt = request.prompt
+
+    actual_prompt = f"""### Instruction:
+{prompt}
+
+### Input:
+{context}
+
+### Response:
+"""
+
+
     num_of_token_generated = request.num_of_token_generated
-    if mixed_precision:
-        with autocast(device_type="cuda", dtype=torch.float16):
+    if cfg.inference.mixed_precision:
+        with autocast(device_type="cuda", dtype=torch.float16): # to switch to bf16, change torch.float16 to torch.bfloat16
             generated_text = generate_texts(
-                model=model,
-                tokenizer=tokenizer,
-                prompts=prompt,
-                gen_len=num_of_token_generated,
-                device=device,
-                miwd_precision=mixed_precision
+                model,
+                tokenizer,
+                [actual_prompt],
+                max_length=20, 
+                temperature=0.3,
+                top_k=50,
+                top_p=0.95,
+                repetition_penalty=1.15
             )
     else:
         generated_text = generate_texts(
-                model=model,
-                tokenizer=tokenizer,
-                prompts=prompt,
-                gen_len=num_of_token_generated,
-                device=device,
-                miwd_precision=mixed_precision
-            )
+            model,
+            tokenizer,
+            [actual_prompt],
+            max_length=20, 
+            temperature=0.3,
+            top_k=50,
+            top_p=0.95,
+            repetition_penalty=1.15
+        )
+
+    generated_text = generated_text[0].split("### Response:")[1].strip()
 
     return TextGenerationResponse(
         generated_text=generated_text,
         prompt=prompt,
+        context=context,
         num_of_token_generated=num_of_token_generated,
     )
 
-@app.post("/generate_text_without_prompt", response_model=TextGenerationWithoutPromptResponse)
-async def generate_text_without_prompt(request: TextGenerationWithoutPromptRequest):
-    """
-    Generate text without a prompt.
-    This function has the same issues as the previous one.
-    So please set a limit if you use this code for bigger projects.
-    """
-    num_of_token_generated = request.num_of_token_generated
-
-    # Call the text generation function here
-    if mixed_precision:
-        with autocast(device_type="cuda", dtype=torch.float16):
-            generated_text = generate_texts(
-                model=model,
-                tokenizer=tokenizer,
-                prompts='First Citizen:',
-                gen_len=num_of_token_generated,
-                device=device,
-                miwd_precision=mixed_precision
-            )
-    else:
-        generated_text = generate_texts(
-                model=model,
-                tokenizer=tokenizer,
-                prompts='First Citizen:',
-                gen_len=num_of_token_generated,
-                device=device,
-                miwd_precision=mixed_precision
-            )
-
-    return TextGenerationWithoutPromptResponse(
-        generated_text=generated_text,
-        num_of_token_generated=num_of_token_generated
-    )

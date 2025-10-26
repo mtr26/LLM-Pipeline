@@ -11,6 +11,16 @@ from safetensors.torch import load_file, load
 import torch
 import torch.nn as nn
 
+
+"""
+This script was used to pre trained REX from scratch using a custom dataset.
+The dataset was a JSONL file with a "text" field. For each line like this:
+{"text": "This is a sample text."}
+The training set was a mix between a subset of C4 and Wikipedia dumps.
+The model was trained for 350M tokens (Mistral 7B tokenizer) for two epochs.
+"""
+
+
 def load_and_tokenize_datasets(
     dataset_file_path: str,
     tokenizer_name: str = "gpt2",
@@ -55,6 +65,12 @@ def load_and_tokenize_datasets(
     return lm_datasets, tokenizer
 
 
+"""
+For training I used Argparse instead of Hydra because of I python version issues.
+The model was trained on GCP using a single L4 GPU with 24GB of VRAM.
+The training used mixed precision (bf16) and torch compile to optimize the training speed.
+"""
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train REX model.")
     parser.add_argument("--dataset_file_path", type=str, required=True)
@@ -64,7 +80,6 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./model_output")
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--model_path", type=str, default=None)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Pre-training")
