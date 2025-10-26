@@ -6,7 +6,7 @@ defaults:
 
 # model hyperparameters
 model:
-  model_name: REX_v0.1
+  model_name: "Maynx/REX_v0.1"
 
 # training settings
 training:
@@ -18,7 +18,6 @@ training:
   output_dir: "./out"
   num_epochs: 2 # Learning phase + checking epoch
   batch_size: 16 # Really depends on the device, e.g 16 would work on a L4.
-  val_ratio: 0.2
 
 
 # inference settings
@@ -26,4 +25,3 @@ inference:
   kv_cache: false # for now leave it false, because of some bugs. (Read model.py for more information)
   quantized: false # You can turn this on, it is supported. However, it may lead to worse results for now (waiting for RLHF later).
   mixed_precision: true # fp16 inference, is supported, but for bf16, you might need to go to the inference file and change it yourself, since I judge that very few people have bf16 devices.
-  model_path: "../models/model_basic_lm_experiment.pth"

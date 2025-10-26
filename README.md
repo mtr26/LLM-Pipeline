@@ -1,185 +1,222 @@
 # LLM Pipeline
 
-A complete pipeline for training, evaluating, and deploying a Language Model (LLM) using PyTorch, MLflow, FastAPI and Docker Compose. 
+A complete end-to-end pipeline for training, fine-tuning, and deploying custom language models using PyTorch, Hugging Face, MLflow, FastAPI, and Docker.
 
-## Project Goal
-The main goal of this project is to learn how to build a complete end-to-end pipeline for training and deploying large language models (LLMs). This repository can serve as a solid baseline for future projects, since it provides all the essential tools needed to deploy a larger-scale application.
+## Overview
 
-
-
+This project demonstrates how to build a small LLM pipeline from scratch, covering everything from model architecture design to training and even deployment. The repository serves as a solid foundation for experimenting with transformer architectures and deploying them at scale.
 
 ## Features
 
-- **Custom Transformer Architecture**: Grouped-query attention (GQA), rotary positional embeddings (RoPE), and per-block pre/post RMSNorm backed by PyTorch SDP Flash Attention.
-- **Hugging Face Compatibility**: `REX` subclasses `PreTrainedModel`, supports tied embeddings, and trains cleanly with the Hugging Face `Trainer`.
-- **Configurable Training**: Hydra-based configuration coupled with Transformers TrainingArguments for easy parameter management.
-- **Mixed Precision Training**: Support for faster and memory efficient training with mixed precision.
-- **MLflow Integration**: Track experiments and metrics.
-- **FastAPI Inference Service**: Deploy trained models as a REST API using Fast API.
-- **Docker Support**: Containerized deployment for both CPU and GPU environments using Docker Compose.
+- **Custom Transformer Architecture**: Grouped-Query Attention (GQA), Rotary Positional Embeddings (RoPE), RMSNorm, and Flash Attention via PyTorch SDPA
+- **Hugging Face Integration**: Full compatibility with `PreTrainedModel`, `Trainer`, and model hub
+- **Hydra Configuration**: Clean, hierarchical config management for training and inference
+- **Mixed Precision Training**: FP16 support for efficient training and inference
+- **MLflow Tracking**: Comprehensive experiment tracking and metrics visualization
+- **FastAPI Inference**: Production-ready REST API for model deployment
+- **Docker Support**: CPU and GPU containerized environments with Docker Compose
+- **Interactive Testing**: Quick model testing via `train/test.py` with custom prompts
 
-## Model Architecture
+## Architecture
 
-The model is a custom Transformer-based language model implemented in PyTorch and built to interoperate with Hugging Face tooling. Highlights:
+The **REX** model is a decoder-only transformer with several modern optimizations:
 
-- **Grouped-Query Attention (GQA)**: Multiple query heads attend over a reduced set of key-value heads for better efficiency at scale.
-- **Rotary Positional Embeddings (RoPE)**: Rotary embeddings are applied inside the attention blocks to preserve relative positioning.
-- **Flash Attention via SDP**: Uses `torch.nn.functional.scaled_dot_product_attention` with SDP Flash kernels for a fused, memory-efficient attention path.
-- **Dual RMSNorm**: Each block applies RMSNorm both before and after attention/MLP (pre/post RSNorm) for improved stability during training.
-
-All architectural hyperparameters are configurable via the Hydra config file.
+- **Grouped-Query Attention (GQA)**
+- **Rotary Positional Embeddings (RoPE)**
+- **Flash Attention**: using `torch.nn.functional.scaled_dot_product_attention`.
+- **RMSNorm**
 
 ## Project Structure
 
 ```
 LLM-Pipeline/
-├── bench/                # Performance benchmark results
-│   ├── kv_cache.png      # KV caching performance comparison
-│   └── model_benchmark_comparison.png
 ├── config/
-│   └── config.yaml       # Hydra configuration for training and model parameters
+│   └── config.yaml             # Hydra configuration (model, training, inference)
 ├── inference/
 │   ├── __init__.py      
-│   ├── inference.py      # FastAPI service for model inference
-│   └── test.py           # Benchmark and testing utilities
+│   └── inference.py            # FastAPI inference server
 ├── model/
 │   ├── __init__.py
-│   └── model.py          # Hugging Face-compatible Transformer with GQA, RoPE, Flash Attention
-├── models/               # Saved model checkpoints (PyTorch & Hugging Face formats)
-│   └── model_basic_lm_experiment.pth
-├── train/                # Training related files
+│   └── model.py                # REX transformer implementation (GQA, RoPE, Flash Attention)
+├── train/
 │   ├── __init__.py
-│   ├── trainer.py        # Hugging Face Trainer entry point with MLflow logging
-│   ├── training.py       # Lightweight/debug training utilities
-│   ├── test.py           # Quick save/load smoke tests for the model
-│   └── input.txt         # Sample input text for training
-├── setup.py              # Editable package setup for local installs (pip install -e .)
-├── docker-compose.yml    # Docker Compose configuration
-├── Dockerfile.cpu        # CPU-optimized container definition
-└── Dockerfile.gpu        # GPU-enabled container definition
+│   ├── pretrain.py             # Pretraining script
+│   ├── pretrain_hydra.py       # Hydra-based pretraining with MLflow
+│   ├── finetuned.py            # Fine-tuning script
+│   └── test.py                 # Interactive model testing
+├── tests/
+│   └── test_grouped_query_attention.py  # Unit tests for KV caching and RoPE
+├── setup.py                    # Package setup for editable install
+├── docker-compose.yml          # Docker orchestration
+├── Dockerfile.cpu              # CPU inference container
+├── Dockerfile.gpu              # GPU inference container
+├── requirementsCPU.txt
+└── requirementsGPU.txt
 ```
 
 ## Installation
 
-Clone the repository and install the required packages:
-
 ```bash
 git clone https://github.com/mtr26/LLM-Pipeline.git
 cd LLM-Pipeline
-# Optional: install the project as an editable package for clean imports
+
+# Install as editable package (recommended)
 pip install -e .
-# If you're using the CPU
-pip install -r requirementsCPU.txt
-# If you're using CUDA
-pip install -r requirementsGPU.txt
+
+# Install dependencies
+pip install -r requirementsCPU.txt    # For CPU
+# OR
+pip install -r requirementsGPU.txt    # For CUDA-enabled GPUs
 ```
 
-## Usage
+## Quick Start
 
-### Training a Model
+### 1. Interactive Model Testing
 
-To train a model using the default configuration:
+Test the pretrained model interactively using `train/test.py`:
 
 ```bash
-python training.py
+python train/test.py
 ```
 
-### MLflow Tracking
+This loads the model from Hugging Face Hub (`Maynx/REX_v0.1`) and provides an interactive prompt for text generation.
 
-To see the MLflow metrics, open the MLflow UI by running:
+### 2. Training
+I started by pre-training my model, REX, from scratch on a 350-million-token subset I built from C4 and Wikipedia. The training was done entirely on a GCP L4 GPU, which was perfect for leveraging its native Flash Attention support. I wrapped up the pre-training phase with a final validation loss of 3.04.
+
+To turn REX into a helpful assistant, I moved on to fine-tuning. I first used the Alpaca dataset to teach it the basic instruction-following format. Then, to really improve its response quality and teach it when to stop talking, I did a final fine-tuning run on the SlimOrca dataset.
+
+
+
+#### Pretraining
+Train the model from scratch using the Hydra configuration:
+
+```bash
+python train/pretrain_hydra.py
+```
+Or using command line arguments:
+```bash
+python train/pretrain.py \
+--dataset_file_path "path/to/dataset.jsonl" \
+--tokenizer_name "I used Mistral 7B here" \
+--max_length 1024 \
+--train_val_ratio 0.8 \
+--output_dir "./out" \
+--num_epochs 3 \
+--batch_size 16 
+```
+
+#### Fine-tuning
+
+Fine-tune a pretrained model on instruction-following data:
+
+```bash
+python train/finetuned.py \
+--model_path path/to/pretrain/model \
+--dataset_name databricks/databricks-dolly-15k \
+--tokenizer_name "Same tokenizer as the pretrained model" \
+--num_epochs 3 \
+--batch_size 16 \
+--learning_rate 5e-5
+```
+
+
+### 3. MLflow Experiment Tracking
+
+Launch the MLflow UI to visualize training metrics:
 
 ```bash
 mlflow ui --backend-store-uri ./mlruns --default-artifact-root ./mlruns
 ```
 
-Navigate to http://localhost:5000 in your browser to view experiments.
+Navigate to [http://localhost:5000](http://localhost:5000) to view experiments, compare runs, and analyze metrics.
 
-### Configuration
+### 4. Inference
 
-The project uses Hydra for configuration management. Key parameters:
+#### Local Inference API
 
-- **Model Configuration**:
-  - `n_layers`: Number of transformer layers
-  - `n_heads`: Number of attention heads
-  - `n_embd`: Embedding dimension
-  - `max_length`: Maximum sequence length
-
-- **Training Configuration**:
-  - `batch_size`: Batch size for training
-  - `lr`: Learning rate
-  - `epochs`: Number of training epochs
-  - `mixed_precision`: Whether to use mixed precision training
-  - `train_ratio`: Portion of data to use for training
-  - `val_ratio`: Portion of data to use for validation
-
-- **Inference Configuration**
-  - `kv_cache`: Whether to use KV caching or not
-  - `quantized`: Whether to use the quantized model or not
-  - `mixed_precision`: Whether to use mixed precision for inference
-  - `model_path`: Path to the model used for inference
-
-### Running Inference
-
-Start the FastAPI inference server:
+Start the FastAPI server:
 
 ```bash
 cd inference
 uvicorn inference:app --reload
 ```
 
-Then, you can send inference requests:
+**Example Requests:**
 
 ```bash
-curl -X POST "http://localhost:8000/generate_text" -H "Content-Type: application/json" -d '{"prompt": "Once upon a time", "num_of_token_generated": 50}'
+# Generate text with a prompt
+curl -X POST "http://localhost:8000/generate_text" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is the capital of France?", "context": "","num_of_token_generated": 50}'
+
+# Expected output (actually produced by the model)
+{"generated_text":"The capital of France is Paris, which has a population of around 10 million people.","prompt":"What is the capital of France?","context":""}
 ```
 
-Or generate text without a prompt:
+## Configuration
+
+The project uses Hydra for hierarchical configuration management. All settings are in `config/config.yaml`:
+
+### Model Parameters
+- `model_name`: The name of the model on the HF hub
+
+### Training Parameters
+- `batch_size`: Training batch size
+- `lr`: Learning rate (for fine tuning)
+- `num_epochs`: Number of training epochs
+- `train_val_ratio`: Train/validation data split
+- `max_length`: The maximum length
+- `tokenizer_name`: Name of the tokenizer used
+- `dataset_file_path`: Dataset used for pre training (JSON file)
+
+### Inference Parameters
+- `kv_cache`: Enable KV caching for faster generation
+- `quantized`: Use quantized model (int8)
+- `mixed_precision`: Use FP16 for inference
+
+## Docker Deployment
+
+Deploy the inference service in containerized environments (CPU or GPU).
+
+**Prerequisites:**
+- Docker and Docker Compose installed
+- For GPU: NVIDIA Docker runtime (`nvidia-docker2`)
+
+**Note:** Docker images are large (~5-10GB). Ensure sufficient disk space.
+
+### CPU Deployment
 
 ```bash
-curl -X POST "http://localhost:8000/generate_text_without_prompt" -H "Content-Type: application/json" -d '{"num_of_token_generated": 100}'
-```
-
-PS: You can also access to the doc using: http://localhost:8000/docs
-
-## Docker Usage
-
-You can build and run the project in a Docker container for both CPU and GPU environments. (For inference)
-
-Make sure you have NVIDIA Docker support (nvidia-docker2) installed.
-
-Warning: These Docker images are very large, so please be cautious.
-
-```powershell
-# Build CPU inference image
-$Env:DOCKER_BUILDKIT=1
-
+# Build CPU image
 docker-compose build inference-cpu
 
-# Run CPU inference
+# Run CPU inference service
 docker-compose up inference-cpu
+```
 
-# Build GPU inference image
+### GPU Deployment
+
+```bash
+# Build GPU image  
 docker-compose build inference-gpu
 
-# Run GPU inference
+# Run GPU inference service
 docker-compose up inference-gpu
 ```
 
-This will start the FastAPI inference server inside the container, accessible at `http://localhost:8000/docs`.
+Access the API at [http://localhost:8000/docs](http://localhost:8000/docs)
 
-## Benchmarks
+## Contributing
 
-Inference performance benchmarks are available in the `bench/` directory. Below are key results:
-
-![KV-Cache Latency Comparison](bench/kv_cache.png)
-*Figure: Average inference latency with and without key-value cache.*
-
-![Model Throughput Comparison](bench/model_benchmark_comparison.png)
-*Figure: Tokens-per-second throughput comparison across configurations.*
-
-Results summary:
-- **KV-Cache Enabled**: Reduced latency by ~20% and increased throughput by ~15% over baseline.
+Contributions are welcome! Please open an issue or submit a pull request.
 
 ## License
 
-[MIT License](LICENSE)
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+- Hugging Face Transformers for the excellent model ecosystem
+- PyTorch team for Flash Attention SDPA implementation
+- MLflow for experiment tracking capabilities

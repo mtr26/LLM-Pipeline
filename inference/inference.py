@@ -18,21 +18,13 @@ especially if you are using this code for bigger projects.
 
 class TextGenerationRequest(BaseModel):
     prompt: str
-    constext: str = ""
+    context: str = ""
     num_of_token_generated: int
 
 class TextGenerationResponse(BaseModel):
     generated_text: str
     prompt: str
     context: str
-    num_of_token_generated: int
-
-class TextGenerationWithoutPromptRequest(BaseModel):
-    num_of_token_generated: int
-
-class TextGenerationWithoutPromptResponse(BaseModel):
-    generated_text: str
-    num_of_token_generated: int
 
 
 app = FastAPI()
@@ -40,10 +32,11 @@ app = FastAPI()
 # Load the model and tokenizer
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cfg = OmegaConf.load("../config/config.yaml")
+tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
 
 if cfg.inference.quantized:
     if device != torch.device("cuda"):
-        model = REX.from_pretrained(cfg.model_name, load_in_8bit=True)
+        model = REX.from_pretrained(cfg.model.model_name, load_in_8bit=True)
         model.to(device)
     else:
         model = torch.quantization.quantize_dynamic(
@@ -53,19 +46,12 @@ if cfg.inference.quantized:
         )
         model.to(device)
 else:
-    model = REX.from_pretrained(cfg.model_name)
+    model = REX.from_pretrained(cfg.model.model_name)
     model.to(device)
     
     if cfg.inference.mixed_precision:
         model = model.half()
         
-
-model = REX.from_pretrained(cfg.model_name)
-tokenizer = AutoTokenizer.from_pretrained(cfg.model_name)
-
-
-
-
 if cfg.inference.kv_cache:
     # Technically the model can use KV caching, but right now I am getting attention junk values, so I truned off this feature for now.
     pass
@@ -124,7 +110,6 @@ async def generate_text(request: TextGenerationRequest):
     return TextGenerationResponse(
         generated_text=generated_text,
         prompt=prompt,
-        context=context,
-        num_of_token_generated=num_of_token_generated,
+        context=context
     )
 

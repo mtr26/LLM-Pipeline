@@ -12,12 +12,10 @@ import torch
 import torch.nn as nn
 
 
+
 """
-This script was used to pre trained REX from scratch using a custom dataset.
-The dataset was a JSONL file with a "text" field. For each line like this:
-{"text": "This is a sample text."}
-The training set was a mix between a subset of C4 and Wikipedia dumps.
-The model was trained for 350M tokens (Mistral 7B tokenizer) for two epochs.
+This script is the same as the pretrain.py but using Hydra for configuration management.
+I did not use Hydra for pre training and fine tuning because it was harder to setup on GCP.
 """
 
 

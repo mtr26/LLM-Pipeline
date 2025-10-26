@@ -1,0 +1,14 @@
+artifact_uri: file:///home/jupyter/LLM-Pipeline/mlruns/563610893238672129/9010645e29604e8a90e93b33b8d29030/artifacts
+end_time: 1760387299618
+entry_point_name: ''
+experiment_id: '563610893238672129'
+lifecycle_stage: active
+run_id: 9010645e29604e8a90e93b33b8d29030
+run_name: REX_Pretraining_Run
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1760333425677
+status: 3
+tags: []
+user_id: jupyter

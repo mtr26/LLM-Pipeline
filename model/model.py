@@ -36,9 +36,17 @@ class REXConfig(PretrainedConfig):
         self.n_kv_heads = n_kv_heads
         self.n_embd = n_embd
         self.dropout = dropout
-        self.tie_word_embeddings = tie_word_embeddings
+        self.tie_word_embeddings = tie_word_embeddings # Don't tie them please or HF will complain during saving.
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
+
+"""
+Small note here: Flash attention only works on Ampere and above GPUs, so no T4 or P100 support.
+The A100, L4, and above will support flash attention.
+If not supported it might fall to efficient attention or math attention.
+But efficient attention is not always supported too, so it might fall back to math attention which is way slower.
+Also Flash attention is used to reduce memory usage and speed up training/inference.
+"""
 
 def scaled_dot_product_attention_grouped_flash(
         queries: torch.Tensor,
@@ -110,6 +118,20 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor):
         return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
+
+
+"""
+Let me explain the problem here with RoPE and KV caching.
+So usually when we do use KV caching we only pass one token at a time during generation.
+However RoPE compared to absolute positional embeddings works with angles and not fixed positions.
+This means that instead of just starting at poisition N if we already generated N-1 tokens, we need to apply an offset to the RoPE embeddings.
+So we have two options:
+1. Store the unrotated K and V matrices in the cache and apply RoPE at each generation step. This did not work, because my RoPE requires Q and K to have the same length.
+2. Apply RoPE to K and V when we first compute them, but there is a small problem with the way the offset is computed in my implementation which leads to attention junk values.
+For now I disabled KV caching until I can fix this issue properly.
+
+I hope you still find this implementation useful.
+"""
 
 class GroupedQueryAttention(nn.Module):
     """
@@ -214,6 +236,8 @@ class GroupedQueryAttention(nn.Module):
 
 
         # This should not work, the attention will be corrupted by RoPE offsets.
+        # This is a test, I tried to also store Q (option 1), but it obviously did not work.
+        # Also I know that this option is definitely not classic, but I still wanted to try it.
         if past_kv is not None:
             pk, pv, pq = past_kv
             k = torch.cat([pk, k], dim=1)
@@ -224,7 +248,7 @@ class GroupedQueryAttention(nn.Module):
 
         new_kv = (k.clone(), v.clone(), q.clone()) if use_cache else None
 
-        # Apply RoPE BEFORE concatenating with past
+        # Apply RoPE BEFORE concatenating with past (did not work well)
         if self.apply_rotary:
             cos_emb, sin_emb = self.generate_sin_cos_pos_emb(
                 nk, 
@@ -361,38 +385,9 @@ class REX(PreTrainedModel, GenerationMixin):
         )
 
 
+# The classic .generate() method from transformers does not my model well.
 @torch.no_grad()
-def generate_texts(model, tokenizer, prompts, max_length=50, temperature=1.0, top_k=50):
-    model.eval()
-    device = next(model.parameters()).device
-
-    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
-    input_ids = inputs.input_ids.to(device)
-    generated = input_ids.clone()
-
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
-
-    for _ in range(max_length):
-        outputs = model(input_ids=generated, use_cache=False)
-        logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
-        if top_k is not None and top_k > 0:
-            values, indices = torch.topk(logits, top_k)
-            logits_filtered = torch.full_like(logits, -float("inf"))
-            logits_filtered.scatter_(1, indices, values)
-            logits = logits_filtered
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-        generated = torch.cat((generated, next_token), dim=1)
-        if eos_token_id is not None:
-            finished |= (next_token.squeeze(-1) == eos_token_id)
-            if finished.all():
-                break
-    texts = tokenizer.batch_decode(generated, skip_special_tokens=True)
-    return texts
-
-@torch.no_grad()
-def generate_texts2(
+def generate_texts(
     model,
     tokenizer,
     prompts,
@@ -409,7 +404,6 @@ def generate_texts2(
     model.eval()
     device = next(model.parameters()).device
 
-    # Tokenize prompts
     inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
     input_ids = inputs.input_ids.to(device)
     generated = input_ids.clone()
@@ -447,14 +441,9 @@ def generate_texts2(
             sorted_logits[mask] = -float("inf")
             logits = torch.zeros_like(logits).scatter(1, sorted_indices, sorted_logits)
 
-        # Convert to probabilities
         probs = torch.nn.functional.softmax(logits, dim=-1)
-
-        # Sample next token
         next_token = torch.multinomial(probs, num_samples=1)
         generated = torch.cat((generated, next_token), dim=1)
-
-        # EOS check
         if eos_token_id is not None:
             finished |= (next_token.squeeze(-1) == eos_token_id)
             if finished.all():

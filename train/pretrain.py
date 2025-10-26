@@ -18,6 +18,7 @@ The dataset was a JSONL file with a "text" field. For each line like this:
 {"text": "This is a sample text."}
 The training set was a mix between a subset of C4 and Wikipedia dumps.
 The model was trained for 350M tokens (Mistral 7B tokenizer) for two epochs.
+Also for more details about the training setup, check the README.md file.
 """
 
 
@@ -80,7 +81,6 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./model_output")
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--model_path", type=str, default=None)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Pre-training")
