@@ -10,7 +10,6 @@ RUN pip install --no-cache-dir -r requirementsCPU.txt
 # Copy project code for inference
 COPY inference/ ./inference
 COPY model/ ./model
-COPY models/ ../models
 COPY config/ ../config
 
 # Expose HTTP port for API
