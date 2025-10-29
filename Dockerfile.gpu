@@ -15,7 +15,6 @@ RUN pip install --no-cache-dir -r requirementsGPU.txt
 # Copy project code for inference
 COPY inference/ ./inference
 COPY model/ ./model
-COPY models/ ../models
 COPY config/ ../config
 
 # Set GPU environment variable
