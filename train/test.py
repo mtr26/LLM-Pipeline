@@ -1,12 +1,11 @@
 import torch
-from model.model import REX, generate_texts, generate_texts2
+from model.model import REX, generate_texts, generate_texts
 from transformers import AutoTokenizer, GenerationConfig
 
 """
 Testing script, you can change the Input to 
 """
 
-torch.backends.quantized.engine = 'qnnpack'
 
 
 tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-v0.3", use_fast=False)
@@ -16,7 +15,6 @@ tokenizer.pad_token_id = tokenizer.unk_token_id
 model = REX.from_pretrained("Maynx/REX_v0.1")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
-model.half()
 
 while True:
     user_prompt = input("Enter a prompt: ")
@@ -30,7 +28,7 @@ Canada has Ottawa as its capital, it's located in Ontario.
 ### Response:
 """
 
-    generated_texts = generate_texts2(
+    generated_texts = generate_texts(
         model,
         tokenizer,
         [prompt],
