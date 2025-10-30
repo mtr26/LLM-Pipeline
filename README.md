@@ -60,6 +60,10 @@ LLM-Pipeline/
 git clone https://github.com/mtr26/LLM-Pipeline.git
 cd LLM-Pipeline
 
+# Create a virtual environment (recommended)
+python3 -m venv env
+source env/bin/activate 
+
 # Install as editable package (recommended)
 pip install -e .
 
