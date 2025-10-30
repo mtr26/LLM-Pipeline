@@ -143,7 +143,7 @@ Start the FastAPI server:
 
 ```bash
 cd inference
-uvicorn inference:app --reload
+python -m uvicorn inference:app --reload
 ```
 
 **Example Requests:**
