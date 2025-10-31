@@ -44,8 +44,6 @@ LLM-Pipeline/
 │   ├── pretrain_hydra.py       # Hydra-based pretraining with MLflow
 │   ├── finetuned.py            # Fine-tuning script
 │   └── test.py                 # Interactive model testing
-├── tests/
-│   └── test_grouped_query_attention.py  # Unit tests for KV caching and RoPE
 ├── setup.py                    # Package setup for editable install
 ├── docker-compose.yml          # Docker orchestration
 ├── Dockerfile.cpu              # CPU inference container
