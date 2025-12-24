@@ -172,7 +172,7 @@ class GroupedQueryAttention(nn.Module):
         if self.apply_rotary:
             self.register_buffer("cos_cached", None, persistent=False)
             self.register_buffer("sin_cached", None, persistent=False)
-            self.generate_sin_cos_pos_emb(max_length, next(model.parameters()).device)
+            self.generate_sin_cos_pos_emb(max_length)
 
     def rotate_half(self, x):
         x1 = x[..., : x.shape[-1] // 2]
@@ -185,8 +185,8 @@ class GroupedQueryAttention(nn.Module):
         k = k.permute(0, 2, 1, 3)  # [B, H_kv, L, D]
     
         # Apply rotary embeddings
-        cos = self.cos_cached[:, :, :seq_len, :].to(q.dtype).to(q.device)
-        sin = self.sin_cached[:, :, :seq_len, :].to(q.dtype).to(q.device)
+        cos = self.cos_cached[:, :, :seq_len, :].to(dtype=q.dtype)
+        sin = self.sin_cached[:, :, :seq_len, :].to(dtype=q.dtype)
         
         q_embed = (q * cos) + (self.rotate_half(q) * sin)
         k_embed = (k * cos) + (self.rotate_half(k) * sin)
@@ -204,14 +204,15 @@ class GroupedQueryAttention(nn.Module):
             self.head_dim,
             self.max_length
         )
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        device = self.q_proj.weight.device
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
         if rope_factor > 1.0:
             seq_len_eff = max(seq_len + offset, max_seq_len)
             base_adjustment = ((rope_factor * seq_len_eff / max_seq_len) - (rope_factor - 1)) ** (dim / (dim - 2))
             adjusted_base = base * base_adjustment
-            inv_freq = 1.0 / (adjusted_base ** (torch.arange(0, dim, 2).float() / dim))
+            inv_freq = 1.0 / (adjusted_base ** (torch.arange(0, dim, 2, device=device).float() / dim))
 
-        position_ids = torch.arange(offset, seq_len + offset, dtype=torch.float)
+        position_ids = torch.arange(offset, seq_len + offset, device=device, dtype=torch.float)
         if not self.is_causal:
             position_ids = position_ids - ((seq_len - 1) // 2)
         freqs = torch.einsum("i,j->ij", position_ids, inv_freq)
@@ -247,19 +248,10 @@ class GroupedQueryAttention(nn.Module):
         # This should not work, the attention will be corrupted by RoPE offsets.
         # This is a test, I tried to also store Q (option 1), but it obviously did not work.
         # Also I know that this option is definitely not classic, but I still wanted to try it.
-        if past_kv is not None:
-            pk, pv, pq = past_kv
-            k = torch.cat([pk, k], dim=1)
-            v = torch.cat([pv, v], dim=1)
-            q = torch.cat([pq, q], dim=1)
-            nk = k.shape[1]
-
-
-        new_kv = (k.clone(), v.clone(), q.clone()) if use_cache else None
 
         # Apply RoPE BEFORE concatenating with past (did not work well)
         if self.apply_rotary:
-            q, k = self.apply_rotary_pos_emb(q, k, dq)
+            q, k = self.apply_rotary_pos_emb(q, k, nk)
 
 
         out = scaled_dot_product_attention_grouped_flash(
@@ -272,11 +264,7 @@ class GroupedQueryAttention(nn.Module):
         out = out.reshape(out.size(0), out.size(1), out.size(2) * out.size(3))
         out = self.out_proj(out)
         out = self.dropout(out)
-
-        if use_cache:
-            out = out[:, -1:, :]
-
-        return out, new_kv
+        return out, None
 
 
 class MLP(nn.Module):
