@@ -147,7 +147,7 @@ if __name__ == "__main__":
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=4,                  
+        gradient_accumulation_steps=8,                  
         dataloader_num_workers=16,
         eval_strategy="epoch",
         save_strategy="epoch",
