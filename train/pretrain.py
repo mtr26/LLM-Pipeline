@@ -63,7 +63,11 @@ def load_and_tokenize_datasets(
         tokenize_function,
         batched=True,
         num_proc=num_proc, # <--- PARALLELIZATION
-        remove_columns=["text", "id", "url", "file_name", "dump", "score", "language"], # Remove metadata to save RAM
+        remove_columns=[
+            "text", "id", "dump", "url", "file_path", 
+            "language", "language_score", "token_count", 
+            "score", "int_score"
+        ,
         desc="Tokenizing dataset"
     )
 
