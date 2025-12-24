@@ -83,9 +83,9 @@ def scaled_dot_product_attention_grouped_flash(
 
     with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
         out = F.scaled_dot_product_attention(
-            query=q,
-            key=k,
-            value=v,
+            q.contiguous(), 
+            k.contiguous(), 
+            v.contiguous(),
             attn_mask=mask,
             dropout_p=dropout_p,
             is_causal=is_causal,
