@@ -360,10 +360,7 @@ class REX(PreTrainedModel, GenerationMixin):
 
         for i, block in enumerate(self.blocks):
             past_kv = past_key_values[i]
-            if self.training:
-                x, new_kv = checkpoint.checkpoint(block, x, past_kv, use_cache, use_reentrant=False)
-            else:
-                x, new_kv = block(x, past_kv, use_cache)
+            x, new_kv = block(x, past_kv, use_cache)
             if use_cache:
                 new_past_key_values.append(new_kv)
         x = self.ln_f(x)
