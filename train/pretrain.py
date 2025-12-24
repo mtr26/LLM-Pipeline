@@ -118,7 +118,7 @@ if __name__ == "__main__":
     mlflow.set_experiment("REX Pre-training")
 
     datasets, tokenizer = load_and_tokenize_datasets(
-        dataset_file_path=args.dataset_file_path,
+        dataset_name_or_path=args.dataset_file_path,
         tokenizer_name=args.tokenizer_name,
         max_length=args.max_length,
         train_val_ratio=args.train_val_ratio
