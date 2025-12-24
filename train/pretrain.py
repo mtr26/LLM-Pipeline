@@ -67,7 +67,7 @@ def load_and_tokenize_datasets(
             "text", "id", "dump", "url", "file_path", 
             "language", "language_score", "token_count", 
             "score", "int_score"
-        ,
+        ],
         desc="Tokenizing dataset"
     )
 
