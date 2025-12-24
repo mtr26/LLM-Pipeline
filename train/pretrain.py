@@ -10,6 +10,7 @@ from safetensors import safe_open as safetensors_open
 from safetensors.torch import load_file, load
 import torch
 import torch.nn as nn
+from itertools import chain
 
 
 """
@@ -23,46 +24,77 @@ Also for more details about the training setup, check the README.md file.
 
 
 def load_and_tokenize_datasets(
-    dataset_file_path: str,
+    dataset_name_or_path: str, # Changed to support Hub datasets
     tokenizer_name: str = "gpt2",
-    max_length: int = 128,
+    max_length: int = 1024, # Increased for 300M model standard
     train_val_ratio: float = 0.95,
 ):
-    raw_dataset = load_dataset('json', data_files=dataset_file_path, split='train')
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=False)
-    tokenizer.pad_token = tokenizer.unk_token
-    tokenizer.pad_token_id = tokenizer.unk_token_id
+    # 1. Load the dataset (Supports local JSON or HF Hub)
+    if dataset_name_or_path.endswith(".json"):
+        raw_dataset = load_dataset('json', data_files=dataset_name_or_path, split='train')
+    else:
+        # Optimized for the FineWeb-Edu dataset we discussed
+        raw_dataset = load_dataset(dataset_name_or_path, name="sample-10BT", split="train")
 
+    # 2. Use the FAST tokenizer (Rust-based)
+    # This is the single biggest speedup for tokenization
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
+    
+    # GPT-2 fix: It usually doesn't have an unk_token, so we use eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # 3. Create Split
     split_dataset = raw_dataset.train_test_split(
         train_size=train_val_ratio,
         shuffle=True,
         seed=42
     )
-    split_dataset['validation'] = split_dataset.pop('test')
+    
+    # 4. Define CPU count for parallel processing
+    # Leave 1-2 cores free so the OS doesn't freeze
+    num_proc = max(1, os.cpu_count() - 2)
 
     def tokenize_function(examples):
-        return tokenizer(examples["text"], truncation=True, padding=False)
+        return tokenizer(examples["text"], truncation=True, max_length=max_length)
 
+    # 5. Tokenize in Parallel
     tokenized_datasets = split_dataset.map(
         tokenize_function,
         batched=True,
-        remove_columns=["text"]
+        num_proc=num_proc, # <--- PARALLELIZATION
+        remove_columns=["text", "id", "url", "file_name", "dump", "score", "language"], # Remove metadata to save RAM
+        desc="Tokenizing dataset"
     )
 
+    # 6. Optimized Grouping (The "Packing" Step)
     def group_texts(examples):
-        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+        # Concatenate all texts. 
+        # 'itertools.chain' is much faster than sum(list, [])
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        
         total_length = len(concatenated_examples[list(examples.keys())[0]])
-        if total_length < max_length:
-            return {}
-        total_length = (total_length // max_length) * max_length
+        
+        # Drop the small remainder, we want tight blocks
+        if total_length >= max_length:
+            total_length = (total_length // max_length) * max_length
+            
         result = {
-            k: [t[i:i+max_length] for i in range(0, total_length, max_length)]
+            k: [t[i : i + max_length] for i in range(0, total_length, max_length)]
             for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
         return result
 
-    lm_datasets = tokenized_datasets.map(group_texts, batched=True)
+    # 7. Group in Parallel
+    lm_datasets = tokenized_datasets.map(
+        group_texts,
+        batched=True,
+        batch_size=1000, # Process larger chunks at once
+        num_proc=num_proc, # <--- PARALLELIZATION
+        desc="Grouping texts"
+    )
+
     return lm_datasets, tokenizer
 
 
@@ -95,10 +127,10 @@ if __name__ == "__main__":
     config = REXConfig(
         vocab_size=tokenizer.vocab_size,
         max_len=args.max_length,
-        n_layers=12,
-        n_heads=12,
+        n_layers=18,
+        n_heads=16,
         n_kv_heads=4,
-        n_embd=768,
+        n_embd=1024,
         dropout=0.1,
     )
 
@@ -117,7 +149,7 @@ if __name__ == "__main__":
         logging_steps=100,
         save_total_limit=2,
         load_best_model_at_end=True,
-        warmup_steps=5000,
+        warmup_steps=1000,
         metric_for_best_model="loss",
         bf16=True,
         learning_rate=3e-4,
