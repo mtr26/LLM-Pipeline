@@ -168,7 +168,7 @@ if __name__ == "__main__":
         model=model,
         args=training_args,
         train_dataset=datasets["train"],
-        eval_dataset=datasets["validation"],
+        eval_dataset=datasets["test"],
         tokenizer=tokenizer,
     )
 
