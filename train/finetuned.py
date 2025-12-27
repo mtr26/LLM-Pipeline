@@ -6,7 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
 from model.model import REX
 import torch
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 
 if __name__ == "__main__":
@@ -47,25 +47,28 @@ if __name__ == "__main__":
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir="./out",
-        num_train_epochs=1,          
-        per_device_train_batch_size=args.batch_size, 
+        max_seq_length=args.max_length,           
+        packing=True,                  
+        num_train_epochs=1,
+        per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
-        learning_rate=args.learning_rate,              
+        learning_rate=args.learning_rate,
         weight_decay=0.01,
-        logging_steps=50,
+        logging_steps=10,
         save_strategy="no",
         eval_strategy="steps",
         eval_steps=100,
         bf16=bf16,
-        fp16= not bf16,
-        optim="adamw_torch_fused", 
-        max_grad_norm=1.0,  
+        fp16=not bf16,
+        optim="adamw_torch_fused",
+        max_grad_norm=1.0,
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run"
+        run_name="REX_SFT_Run",
+        dataset_text_field="messages",   
     )
 
     trainer = SFTTrainer(
@@ -74,8 +77,6 @@ if __name__ == "__main__":
         train_dataset=datasets["train"],
         eval_dataset=datasets["test"],
         processing_class=tokenizer,
-        max_seq_length=args.max_length, 
-        packing=True,
     )
 
     trainer.train()
