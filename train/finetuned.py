@@ -81,7 +81,7 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
-        dataset_text_field="messages",   
+        dataset_text_field="text",   
     )
 
     trainer = SFTTrainer(
