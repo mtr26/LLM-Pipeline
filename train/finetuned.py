@@ -71,6 +71,7 @@ if __name__ == "__main__":
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="no",
+        gradient_checkpointing=False,
         eval_strategy="steps",
         eval_steps=100,
         bf16=bf16,
