@@ -9,6 +9,13 @@ import torch
 from trl import SFTTrainer, SFTConfig
 
 
+def format_no_robots(example):
+    msgs = example["messages"]
+    text = ""
+    for m in msgs:
+        text += f"{m['role'].capitalize()}: {m['content']}\n"
+    return {"text": text}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
     parser.add_argument("--model_path", type=str, required=True)
@@ -44,14 +51,19 @@ if __name__ == "__main__":
     datasets = load_dataset(args.dataset_name, split="train")
     datasets = datasets.train_test_split(test_size=0.05)
 
+    datasets = datasets.map(
+        format_no_robots,
+        remove_columns=datasets["train"].column_names,
+        num_proc=os.cpu_count()
+    )
+
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
     training_args = SFTConfig(
         output_dir="./out",
         max_length=args.max_length,           
-        packing=True,   
-        dataset_text_field="text",
+        packing=True,                  
         num_train_epochs=1,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
@@ -68,7 +80,8 @@ if __name__ == "__main__":
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run",   
+        run_name="REX_SFT_Run",
+        dataset_text_field="messages",   
     )
 
     trainer = SFTTrainer(
