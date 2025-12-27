@@ -73,7 +73,7 @@ if __name__ == "__main__":
         args=training_args,
         train_dataset=datasets["train"],
         eval_dataset=datasets["test"],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         max_seq_length=args.max_length, 
         packing=True,
     )
