@@ -6,55 +6,9 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
 from model.model import REX
 import torch
-
-"""
-This script can be used to fine-tune a pre-trained REX model on the Dolly 15k dataset.
-We can adapt this script to fine-tune REX on any instruction-following dataset by changing the preprocessing function.
-Keep in mind that dolly 15k is a small dataset, the real model was fine tuned on Alpaca and then SlimOrca.
-Technically you can use accelerate along with TPUs or multi-GPU setups to fine-tune bigger models.
-But because of argparse I would not recommend using this script with accelerate launch.
-"""
-def prepare_finetuning_dataset(
-    dataset_name: str,
-    tokenizer: AutoTokenizer,
-    max_length: int = 512,
-    test_size: float = 0.10,
-):
-    dataset = load_dataset(dataset_name, split="train")
-
-    def preprocess_and_mask(example):
-        # Interesting format but this is a actually really working.
-        instruction = f"### Instruction:\n{example['instruction']}"
-        context = f"\n\n### Input:\n{example['input']}" if example.get("input") else ""
-        response = f"\n\n### Response:\n{example['output']}"
-
-        full_text = instruction + context + response + tokenizer.eos_token
-        tokenized_full = tokenizer(
-            full_text,
-            max_length=max_length,
-            truncation=True,
-            padding="max_length"
-        )
-
-        prompt_only = instruction + context + "\n\n### Response:\n"
-        tokenized_prompt = tokenizer(prompt_only, max_length=max_length, truncation=True)
-
-        labels = copy.deepcopy(tokenized_full["input_ids"])
-        prompt_len = len(tokenized_prompt["input_ids"])
-        labels[:prompt_len] = [-100] * prompt_len
-
-        tokenized_full["labels"] = labels
-        return tokenized_full
-
-    processed_dataset = dataset.map(preprocess_and_mask, remove_columns=dataset.column_names)
-    split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=42)
-    return split_dataset
+from trl import SFTTrainer
 
 
-
-"""
-Same as pretrain.py, argparse was prefered here.
-"""
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
     parser.add_argument("--model_path", type=str, required=True)
@@ -63,7 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./dolly15k_rex_finetuned")
     parser.add_argument("--num_epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--learning_rate", type=float, default=5e-5)
+    parser.add_argument("--learning_rate", type=float, default=2e-5)
     parser.add_argument("--max_length", type=int, default=1024)
     args = parser.parse_args()
 
@@ -73,50 +27,55 @@ if __name__ == "__main__":
     tokenizer.pad_token = tokenizer.unk_token
     tokenizer.pad_token_id = tokenizer.unk_token_id
 
-    model = REX.from_pretrained(args.model_path)
+    model = REX.from_pretrained(
+        args.model_path,
+        device_map=None,
+        low_cpu_mem_usage=False
+    )
+
+    for block in model.blocks:
+        block.attention.generate_sin_cos_pos_emb(model.config.max_len)
+
+    chat_template = "{% for message in messages %}{{'<|' + message['role'] + '|>\n' + message['content'] + tokenizer.eos_token + '\n'}}{% endfor %}"
+    tokenizer.chat_template = chat_template 
+
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    datasets = prepare_finetuning_dataset(
-        dataset_name=args.dataset_name,
-        tokenizer=tokenizer,
-        max_length=args.max_length,
-    )
+    datasets = load_dataset(args.dataset_name, split="train")
+    datasets = datasets.train_test_split(test_size=0.05)
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
     training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.num_epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="loss",
-        logging_steps=50,
-        warmup_ratio=0.03,
+        output_dir="./out",
+        num_train_epochs=1,          
+        per_device_train_batch_size=args.batch_size, 
+        gradient_accumulation_steps=1,
+        learning_rate=args.learning_rate,              
         weight_decay=0.01,
+        logging_steps=50,
+        save_strategy="no",
+        eval_strategy="steps",
+        eval_steps=100,
         bf16=bf16,
-        fp16=not bf16,
-        torch_compile=True,
-        torch_compile_mode="reduce-overhead",
-        remove_unused_columns=False,
-        report_to=["mlflow"],
-        run_name="REX_Dolly15k_FineTuning",
+        fp16= not bf16,
+        optim="adamw_torch_fused", 
+        max_grad_norm=1.0,  
+        warmup_ratio=0.03,
+        lr_scheduler_type="cosine",
+        report_to="mlflow",
+        run_name="REX_SFT_Run"
     )
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-
-    trainer = Trainer(
+    trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=datasets["train"],
-        eval_dataset=datasets["test"],
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
         tokenizer=tokenizer,
-        data_collator=data_collator,
+        max_seq_length=args.max_length, 
+        packing=True,
     )
 
     trainer.train()
