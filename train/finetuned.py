@@ -71,8 +71,8 @@ if __name__ == "__main__":
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset["test"],
+        train_dataset=datasets["train"],
+        eval_dataset=datasets["test"],
         tokenizer=tokenizer,
         max_seq_length=args.max_length, 
         packing=True,
