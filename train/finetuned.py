@@ -50,7 +50,8 @@ if __name__ == "__main__":
     training_args = SFTConfig(
         output_dir="./out",
         max_length=args.max_length,           
-        packing=True,                  
+        packing=True,   
+        dataset_text_field="text",
         num_train_epochs=1,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
