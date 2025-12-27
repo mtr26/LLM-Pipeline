@@ -338,6 +338,7 @@ class REX(PreTrainedModel, GenerationMixin):
             use_cache: bool = False,
             inputs_embeds: Optional[torch.Tensor] = None,
             attention_mask=None,
+            position_ids=None,
             return_dict: bool = True
         ) -> CausalLMOutputWithPast:
         
