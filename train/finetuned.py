@@ -9,12 +9,13 @@ import torch
 from trl import SFTTrainer, SFTConfig
 
 
-def format_no_robots(example):
-    msgs = example["messages"]
-    text = ""
-    for m in msgs:
-        text += f"{m['role'].capitalize()}: {m['content']}\n"
-    return {"text": text}
+def format_to_text(example):
+    example["text"] = tokenizer.apply_chat_template(
+        example["messages"], 
+        tokenize=False, 
+        add_generation_prompt=False
+    )
+    return example
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
@@ -43,16 +44,23 @@ if __name__ == "__main__":
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
-    chat_template = "{% for message in messages %}{{'<|' + message['role'] + '|>\n' + message['content'] + tokenizer.eos_token + '\n'}}{% endfor %}"
-    tokenizer.chat_template = chat_template 
+    chat_template = (
+        "{% for message in messages %}"
+        "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% endif %}"
+    )
+    tokenizer.chat_template = chat_template
 
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    datasets = load_dataset(args.dataset_name, split="train")
+    datasets = load_dataset(args.dataset_name, split="train_sft[:20000]")
     datasets = datasets.train_test_split(test_size=0.05)
 
     datasets = datasets.map(
-        format_no_robots,
+        format_to_text,
         remove_columns=datasets["train"].column_names,
         num_proc=os.cpu_count()
     )
@@ -63,15 +71,15 @@ if __name__ == "__main__":
     training_args = SFTConfig(
         output_dir="./out",
         max_length=args.max_length,           
-        packing=False,                  
+        packing=True,                  
         num_train_epochs=1,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
+        gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="no",
-        gradient_checkpointing=False,
         eval_strategy="steps",
         eval_steps=100,
         bf16=bf16,
@@ -82,7 +90,7 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
-        dataset_text_field="text",   
+        dataset_text_field="messages",   
     )
 
     trainer = SFTTrainer(
