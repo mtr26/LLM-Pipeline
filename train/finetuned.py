@@ -8,13 +8,40 @@ from model.model import REX
 import torch
 from trl import SFTTrainer, SFTConfig
 
+ALPACA_PROMPT = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
-def format_to_text(example):
-    example["text"] = tokenizer.apply_chat_template(
-        example["messages"], 
-        tokenize=False, 
-        add_generation_prompt=False
-    )
+### Instruction:
+{instruction}
+
+### Input:
+{input}
+
+### Response:
+"""
+
+ALPACA_NO_INPUT_PROMPT = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+{instruction}
+
+### Response:
+"""
+
+def format_alpaca(example):
+    # If the example has an "input" (context), use the full template.
+    if example.get("input", "") != "":
+        text = ALPACA_PROMPT.format(
+            instruction=example["instruction"],
+            input=example["input"]
+        )
+    else:
+        text = ALPACA_NO_INPUT_PROMPT.format(
+            instruction=example["instruction"]
+        )
+    
+    # We append the response so the model learns to generate it
+    text += example["output"] + tokenizer.eos_token
+    example["text"] = text
     return example
 
 if __name__ == "__main__":
@@ -44,26 +71,12 @@ if __name__ == "__main__":
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
-    chat_template = (
-        "{% for message in messages %}"
-        "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
-        "{% endfor %}"
-        "{% if add_generation_prompt %}"
-        "{{ '<|im_start|>assistant\n' }}"
-        "{% endif %}"
-    )
-    tokenizer.chat_template = chat_template
-
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    datasets = load_dataset(args.dataset_name, split="train[:20000]")
-    datasets = datasets.train_test_split(test_size=0.05)
+    dataset = load_dataset(args.dataset_name, split="train")
+    dataset = dataset.train_test_split(test_size=0.05)
 
-    datasets = datasets.map(
-        format_to_text,
-        remove_columns=datasets["train"].column_names,
-        num_proc=os.cpu_count()
-    )
+    dataset = dataset.map(format_alpaca, num_proc=os.cpu_count())
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -71,17 +84,17 @@ if __name__ == "__main__":
     training_args = SFTConfig(
         output_dir="./out",
         max_length=args.max_length,           
-        packing=False,                  
+        packing=True,                  
         num_train_epochs=1,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
         gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
-        logging_steps=100,
+        logging_steps=10,
         save_strategy="no",
         eval_strategy="steps",
-        eval_steps=200,
+        eval_steps=100,
         bf16=bf16,
         fp16=not bf16,
         optim="adamw_torch_fused",
@@ -90,14 +103,14 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
-        dataset_text_field="text",   
+        dataset_text_field="messages",   
     )
 
     trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=datasets["train"],
-        eval_dataset=datasets["test"],
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
         processing_class=tokenizer,
     )
 
