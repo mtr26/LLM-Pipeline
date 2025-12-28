@@ -70,7 +70,7 @@ if __name__ == "__main__":
     dataset = load_dataset(args.dataset_name, split="train")
     dataset = dataset.train_test_split(test_size=0.05)
 
-    dataset = dataset.map(format_no_robots_as_alpaca, num_proc=os.cpu_count(), remove_columns=dataset.column_names)
+    dataset = dataset.map(format_no_robots_as_alpaca, num_proc=os.cpu_count())
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
