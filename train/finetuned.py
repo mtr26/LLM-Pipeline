@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    datasets = load_dataset(args.dataset_name, split="train_sft[:20000]")
+    datasets = load_dataset(args.dataset_name, split="train[:20000]")
     datasets = datasets.train_test_split(test_size=0.05)
 
     datasets = datasets.map(
