@@ -32,8 +32,6 @@ def format_no_robots_as_alpaca(example):
     user_msgs = [m["content"] for m in messages if m["role"] == "user"]
     assistant_msgs = [m["content"] for m in messages if m["role"] == "assistant"]
 
-    if len(user_msgs) == 0 or len(assistant_msgs) == 0:
-        return None  # drop bad samples
 
     text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msgs[0])
     text += assistant_msgs[0] + tokenizer.eos_token
