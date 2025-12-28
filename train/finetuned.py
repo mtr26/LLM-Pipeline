@@ -28,15 +28,18 @@ ALPACA_NO_INPUT_PROMPT = """Below is an instruction that describes a task. Write
 """
 
 def format_no_robots_as_alpaca(example):
-    messages = example["messages"]
-    user_msgs = [m["content"] for m in messages if m["role"] == "user"]
-    assistant_msgs = [m["content"] for m in messages if m["role"] == "assistant"]
-
-    if len(user_msgs) == 0 or len(assistant_msgs) == 0:
-        return None  # drop bad samples
-
-    text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msgs[0])
-    text += assistant_msgs[0] + tokenizer.eos_token
+    # no_robots has a 'messages' list: 
+    # [{"role": "user", "content": "..."} , {"role": "assistant", "content": "..."}]
+    
+    # We extract the User content as 'Instruction'
+    user_msg = example["messages"][0]["content"]
+    # We extract the Assistant content as 'Response'
+    assist_msg = example["messages"][1]["content"]
+    
+    # Apply the strict Alpaca formatting
+    text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msg)
+    text += assist_msg + tokenizer.eos_token
+    
     example["text"] = text
     return example
 
