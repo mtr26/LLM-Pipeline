@@ -28,18 +28,15 @@ ALPACA_NO_INPUT_PROMPT = """Below is an instruction that describes a task. Write
 """
 
 def format_no_robots_as_alpaca(example):
-    # no_robots has a 'messages' list: 
-    # [{"role": "user", "content": "..."} , {"role": "assistant", "content": "..."}]
-    
-    # We extract the User content as 'Instruction'
-    user_msg = example["messages"][0]["content"]
-    # We extract the Assistant content as 'Response'
-    assist_msg = example["messages"][1]["content"]
-    
-    # Apply the strict Alpaca formatting
-    text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msg)
-    text += assist_msg + tokenizer.eos_token
-    
+    messages = example["messages"]
+    user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+    assistant_msgs = [m["content"] for m in messages if m["role"] == "assistant"]
+
+    if len(user_msgs) == 0 or len(assistant_msgs) == 0:
+        return None  # drop bad samples
+
+    text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msgs[0])
+    text += assistant_msgs[0] + tokenizer.eos_token
     example["text"] = text
     return example
 
@@ -75,8 +72,7 @@ if __name__ == "__main__":
     dataset = load_dataset(args.dataset_name, split="train")
     dataset = dataset.train_test_split(test_size=0.05)
 
-    dataset = dataset.map(format_no_robots_as_alpaca, num_proc=os.cpu_count())
-    dataset = dataset.filter(lambda x: x is not None)
+    dataset = dataset.map(format_no_robots_as_alpaca, num_proc=os.cpu_count(), remove_columns=dataset.column_names)
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -103,7 +99,7 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
-        dataset_text_field="text"
+        dataset_text_field="text",   
     )
 
     trainer = SFTTrainer(
@@ -111,7 +107,7 @@ if __name__ == "__main__":
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["test"],
-        processing_class=tokenizer,
+        processing_class=tokenizer
     )
 
     trainer.train()
