@@ -27,20 +27,16 @@ ALPACA_NO_INPUT_PROMPT = """Below is an instruction that describes a task. Write
 ### Response:
 """
 
-def format_alpaca(example):
-    # If the example has an "input" (context), use the full template.
-    if example.get("input", "") != "":
-        text = ALPACA_PROMPT.format(
-            instruction=example["instruction"],
-            input=example["input"]
-        )
-    else:
-        text = ALPACA_NO_INPUT_PROMPT.format(
-            instruction=example["instruction"]
-        )
-    
-    # We append the response so the model learns to generate it
-    text += example["output"] + tokenizer.eos_token
+def format_no_robots_as_alpaca(example):
+    messages = example["messages"]
+    user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+    assistant_msgs = [m["content"] for m in messages if m["role"] == "assistant"]
+
+    if len(user_msgs) == 0 or len(assistant_msgs) == 0:
+        return None  # drop bad samples
+
+    text = ALPACA_NO_INPUT_PROMPT.format(instruction=user_msgs[0])
+    text += assistant_msgs[0] + tokenizer.eos_token
     example["text"] = text
     return example
 
@@ -76,7 +72,8 @@ if __name__ == "__main__":
     dataset = load_dataset(args.dataset_name, split="train")
     dataset = dataset.train_test_split(test_size=0.05)
 
-    dataset = dataset.map(format_alpaca, num_proc=os.cpu_count())
+    dataset = dataset.map(format_no_robots_as_alpaca, num_proc=os.cpu_count(), remove_columns=dataset.column_names)
+    dataset = dataset.filter(lambda x: x is not None)
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -102,7 +99,8 @@ if __name__ == "__main__":
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run" 
+        run_name="REX_SFT_Run",
+        dataset_text_field="text",   
     )
 
     trainer = SFTTrainer(
