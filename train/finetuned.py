@@ -99,7 +99,8 @@ if __name__ == "__main__":
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run"  
+        run_name="REX_SFT_Run",
+        dataset_text_field="text"
     )
 
     trainer = SFTTrainer(
