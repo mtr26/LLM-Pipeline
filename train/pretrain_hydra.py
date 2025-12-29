@@ -8,27 +8,16 @@ from model.model import REX
 import torch
 from trl import SFTTrainer, SFTConfig
 
-CHATML_SYSTEM = "<|im_start|>system\nYou are a helpful, concise assistant.\n<|im_end|>\n"
-CHATML_USER = "<|im_start|>user\n{content}\n<|im_end|>\n"
-CHATML_ASSISTANT = "<|im_start|>assistant\n{content}\n<|im_end|>\n"
-
 def format_ultrachat(example):
-    messages = example["messages"]  # list of dicts with role/content
-    
-    # Build prompt = everything before assistant's last message
-    # completion = assistant's last message
-    user_messages = []
-    completion = ""
-    for m in messages:
-        if m["role"] == "assistant":
-            completion = m["content"]
-            break
-        user_messages.append(f"<|{m['role']}|>\n{m['content']}\n")
+    text = "<|im_start|>system\nYou are a helpful, concise assistant.\n<|im_end|>\n"
 
-    prompt = "".join(user_messages)
-    
-    example["prompt"] = prompt
-    example["completion"] = completion + tokenizer.eos_token
+    for m in example["messages"]:
+        if m["role"] == "user":
+            text += f"<|im_start|>user\n{m['content']}\n<|im_end|>\n"
+        elif m["role"] == "assistant":
+            text += f"<|im_start|>assistant\n{m['content']}\n<|im_end|>\n"
+
+    example["text"] = text + tokenizer.eos_token
     return example
 
 if __name__ == "__main__":
@@ -49,11 +38,27 @@ if __name__ == "__main__":
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% endif %}"
+    )
+
+    special_tokens = {
+    "additional_special_tokens": ["<|im_start|>", "<|im_end|>"]
+}
+    tokenizer.add_special_tokens(special_tokens)
+
     model = REX.from_pretrained(
         args.model_path,
         device_map=None,
         low_cpu_mem_usage=False
     )
+
+    model.resize_token_embeddings(len(tokenizer))
 
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
@@ -92,7 +97,8 @@ if __name__ == "__main__":
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run"
+        run_name="REX_SFT_Run",
+        dataset_text_field="text"
     )
 
     trainer = SFTTrainer(
