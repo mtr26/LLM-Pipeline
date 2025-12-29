@@ -9,16 +9,12 @@ import torch
 from trl import SFTTrainer, SFTConfig
 
 def format_ultrachat(example):
-    text = "<|im_start|>system\nYou are a helpful, concise assistant.\n<|im_end|>\n"
-
-    for m in example["messages"]:
-        if m["role"] == "user":
-            text += f"<|im_start|>user\n{m['content']}\n<|im_end|>\n"
-        elif m["role"] == "assistant":
-            text += f"<|im_start|>assistant\n{m['content']}\n<|im_end|>\n"
-
-    example["text"] = text + tokenizer.eos_token
-    return example
+    messages = example["messages"]
+    text = "<|im_start|>system\nYou are a helpful assistant.\n<|im_end|>\n"
+    for m in messages:
+        text += f"<|im_start|>{m['role']}\n{m['content']}\n<|im_end|>\n"
+    text += tokenizer.eos_token
+    return {"text": text}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
