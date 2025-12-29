@@ -10,11 +10,22 @@ from trl import SFTTrainer, SFTConfig
 
 def format_ultrachat(example):
     messages = example["messages"]
-    text = "<|im_start|>system\nYou are a helpful assistant.\n<|im_end|>\n"
+    prompt = ""
+    completion = None
     for m in messages:
-        text += f"<|im_start|>{m['role']}\n{m['content']}\n<|im_end|>\n"
-    text += tokenizer.eos_token
-    return {"text": text}
+        if m["role"] == "assistant":
+            completion = m["content"]
+            break
+        else:
+            prompt += f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n"
+
+    if completion is None:
+        return None
+    completion = completion + tokenizer.eos_token
+    return {
+        "prompt": prompt,
+        "completion": completion
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
