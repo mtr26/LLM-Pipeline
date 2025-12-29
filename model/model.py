@@ -319,6 +319,12 @@ class REX(PreTrainedModel, GenerationMixin):
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.post_init()
 
+    def get_input_embeddings(self):
+        return self.embedding
+
+    def set_input_embeddings(self, new_embeddings):
+        self.embedding = new_embeddings
+
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             init.normal_(module.weight, mean=0.0, std=0.02)
