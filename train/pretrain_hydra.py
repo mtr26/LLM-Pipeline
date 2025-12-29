@@ -1,140 +1,112 @@
 import os
 import argparse
+import copy
 import mlflow
 from datasets import load_dataset
-import safetensors
-from transformers import AutoTokenizer, Trainer, TrainingArguments
-from transformers import DataCollatorForLanguageModeling
-from model.model import REXConfig, REX
-from safetensors import safe_open as safetensors_open
-from safetensors.torch import load_file, load
+from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+from model.model import REX
 import torch
-import torch.nn as nn
+from trl import SFTTrainer, SFTConfig
 
+CHATML_SYSTEM = "<|im_start|>system\nYou are a helpful, concise assistant.\n<|im_end|>\n"
+CHATML_USER = "<|im_start|>user\n{content}\n<|im_end|>\n"
+CHATML_ASSISTANT = "<|im_start|>assistant\n{content}\n<|im_end|>\n"
 
+def format_ultrachat_as_chatml(example):
+    """
+    UltraChat schema:
+    example["messages"] = [{"role": "user", "content": ...}, {"role": "assistant", ...}, ...]
+    """
+    messages = example["messages"]
 
-"""
-This script is the same as the pretrain.py but using Hydra for configuration management.
-I did not use Hydra for pre training and fine tuning because it was harder to setup on GCP.
-"""
+    # basic sanity check
+    if len(messages) < 2:
+        return None
 
+    text = CHATML_SYSTEM
 
-def load_and_tokenize_datasets(
-    dataset_file_path: str,
-    tokenizer_name: str = "gpt2",
-    max_length: int = 128,
-    train_val_ratio: float = 0.95,
-):
-    raw_dataset = load_dataset('json', data_files=dataset_file_path, split='train')
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=False)
-    tokenizer.pad_token = tokenizer.unk_token
-    tokenizer.pad_token_id = tokenizer.unk_token_id
+    for m in messages:
+        if m["role"] == "user":
+            text += CHATML_USER.format(content=m["content"])
+        elif m["role"] == "assistant":
+            text += CHATML_ASSISTANT.format(content=m["content"])
 
-    split_dataset = raw_dataset.train_test_split(
-        train_size=train_val_ratio,
-        shuffle=True,
-        seed=42
-    )
-    split_dataset['validation'] = split_dataset.pop('test')
-
-    def tokenize_function(examples):
-        return tokenizer(examples["text"], truncation=True, padding=False)
-
-    tokenized_datasets = split_dataset.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=["text"]
-    )
-
-    def group_texts(examples):
-        concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-        total_length = len(concatenated_examples[list(examples.keys())[0]])
-        if total_length < max_length:
-            return {}
-        total_length = (total_length // max_length) * max_length
-        result = {
-            k: [t[i:i+max_length] for i in range(0, total_length, max_length)]
-            for k, t in concatenated_examples.items()
-        }
-        result["labels"] = result["input_ids"].copy()
-        return result
-
-    lm_datasets = tokenized_datasets.map(group_texts, batched=True)
-    return lm_datasets, tokenizer
-
-
-"""
-For training I used Argparse instead of Hydra because of I python version issues.
-The model was trained on GCP using a single L4 GPU with 24GB of VRAM.
-The training used mixed precision (bf16) and torch compile to optimize the training speed.
-"""
+    text += tokenizer.eos_token
+    example["text"] = text
+    return example
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train REX model.")
-    parser.add_argument("--dataset_file_path", type=str, required=True)
+    parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
+    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--dataset_name", type=str, default="databricks/databricks-dolly-15k")
     parser.add_argument("--tokenizer_name", type=str, default="gpt2")
-    parser.add_argument("--max_length", type=int, default=128)
-    parser.add_argument("--train_val_ratio", type=float, default=0.95)
-    parser.add_argument("--output_dir", type=str, default="./model_output")
-    parser.add_argument("--num_epochs", type=int, default=3)
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--output_dir", type=str, default="./dolly15k_rex_finetuned")
+    parser.add_argument("--num_epochs", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--learning_rate", type=float, default=2e-5)
+    parser.add_argument("--max_length", type=int, default=1024)
     args = parser.parse_args()
 
-    mlflow.set_experiment("REX Pre-training")
+    mlflow.set_experiment("REX Fine-tuning")
 
-    datasets, tokenizer = load_and_tokenize_datasets(
-        dataset_file_path=args.dataset_file_path,
-        tokenizer_name=args.tokenizer_name,
-        max_length=args.max_length,
-        train_val_ratio=args.train_val_ratio
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    model = REX.from_pretrained(
+        args.model_path,
+        device_map=None,
+        low_cpu_mem_usage=False
     )
 
-    config = REXConfig(
-        vocab_size=tokenizer.vocab_size,
-        max_len=args.max_length,
-        n_layers=12,
-        n_heads=12,
-        n_kv_heads=4,
-        n_embd=768,
-        dropout=0.1,
-    )
+    for block in model.blocks:
+        block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
-    model = REX(config=config)
+    print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
-    print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
+    dataset = load_dataset(args.dataset_name, split="train")
+    dataset = dataset.train_test_split(test_size=0.05)
 
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.num_epochs,
+    dataset = dataset.map(
+        format_ultrachat_as_chatml,
+        num_proc=os.cpu_count()
+    ).filter(lambda x: x is not None)
+
+    # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
+    bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+
+    training_args = SFTConfig(
+        output_dir="./out",
+        max_length=args.max_length,           
+        packing=False,                  
+        num_train_epochs=1,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        logging_dir=os.path.join(args.output_dir, "logs"),
-        logging_steps=100,
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        warmup_steps=5000,
-        metric_for_best_model="loss",
-        bf16=True,
-        learning_rate=3e-4,
-        report_to=["mlflow"],
-        run_name="REX_Pretraining_Run",
-        torch_compile=True,                      
-        torch_compile_mode="reduce-overhead",
-
+        gradient_accumulation_steps=1,
+        gradient_checkpointing=False,
+        learning_rate=args.learning_rate,
+        weight_decay=0.01,
+        logging_steps=10,
+        save_strategy="no",
+        eval_strategy="steps",
+        eval_steps=100,
+        bf16=bf16,
+        fp16=not bf16,
+        optim="adamw_torch_fused",
+        max_grad_norm=1.0,
+        warmup_ratio=0.03,
+        lr_scheduler_type="cosine",
+        report_to="mlflow",
+        run_name="REX_SFT_Run" 
     )
 
-    trainer = Trainer(
+    trainer = SFTTrainer(
         model=model,
         args=training_args,
-        train_dataset=datasets["train"],
-        eval_dataset=datasets["validation"],
-        tokenizer=tokenizer,
+        train_dataset=dataset["train"],
+        eval_dataset=dataset["test"],
+        processing_class=tokenizer,
     )
 
-
-
     trainer.train()
-    model.save_pretrained(args.output_dir, safe_serialization=False)
-    tokenizer.save_pretrained(f"{args.output_dir}/saved")
+    trainer.save_model(args.output_dir)
+    tokenizer.save_pretrained(args.output_dir)
