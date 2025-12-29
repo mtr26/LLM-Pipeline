@@ -54,18 +54,12 @@ if __name__ == "__main__":
         "{% endif %}"
     )
 
-    special_tokens = {
-    "additional_special_tokens": ["<|im_start|>", "<|im_end|>"]
-}
-    tokenizer.add_special_tokens(special_tokens)
 
     model = REX.from_pretrained(
         args.model_path,
         device_map=None,
         low_cpu_mem_usage=False
     )
-
-    model.resize_token_embeddings(len(tokenizer))
 
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
