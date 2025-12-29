@@ -12,27 +12,23 @@ CHATML_SYSTEM = "<|im_start|>system\nYou are a helpful, concise assistant.\n<|im
 CHATML_USER = "<|im_start|>user\n{content}\n<|im_end|>\n"
 CHATML_ASSISTANT = "<|im_start|>assistant\n{content}\n<|im_end|>\n"
 
-def format_ultrachat_as_chatml(example):
-    """
-    UltraChat schema:
-    example["messages"] = [{"role": "user", "content": ...}, {"role": "assistant", ...}, ...]
-    """
-    messages = example["messages"]
-
-    # basic sanity check
-    if len(messages) < 2:
-        return None
-
-    text = CHATML_SYSTEM
-
+def format_ultrachat(example):
+    messages = example["messages"]  # list of dicts with role/content
+    
+    # Build prompt = everything before assistant's last message
+    # completion = assistant's last message
+    user_messages = []
+    completion = ""
     for m in messages:
-        if m["role"] == "user":
-            text += CHATML_USER.format(content=m["content"])
-        elif m["role"] == "assistant":
-            text += CHATML_ASSISTANT.format(content=m["content"])
+        if m["role"] == "assistant":
+            completion = m["content"]
+            break
+        user_messages.append(f"<|{m['role']}|>\n{m['content']}\n")
 
-    text += tokenizer.eos_token
-    example["text"] = text
+    prompt = "".join(user_messages)
+    
+    example["prompt"] = prompt
+    example["completion"] = completion + tokenizer.eos_token
     return example
 
 if __name__ == "__main__":
@@ -68,7 +64,7 @@ if __name__ == "__main__":
     dataset = dataset.train_test_split(test_size=0.05)
 
     dataset = dataset.map(
-        format_ultrachat_as_chatml,
+        format_ultrachat,
         num_proc=os.cpu_count()
     ).filter(lambda x: x is not None)
 
@@ -96,8 +92,7 @@ if __name__ == "__main__":
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
         report_to="mlflow",
-        run_name="REX_SFT_Run",
-        dataset_text_field="text"
+        run_name="REX_SFT_Run"
     )
 
     trainer = SFTTrainer(
