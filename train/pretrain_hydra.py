@@ -8,24 +8,28 @@ from model.model import REX
 import torch
 from trl import SFTTrainer, SFTConfig
 
-def format_ultrachat(example):
-    messages = example["messages"]
-    prompt = ""
-    completion = None
-    for m in messages:
-        if m["role"] == "assistant":
-            completion = m["content"]
-            break
-        else:
-            prompt += f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n"
+SYSTEM_IDENTITY = "You are REX, a helpful, honest, and expert coding AI assistant."
 
-    if completion is None:
-        return None
-    completion = completion + tokenizer.eos_token
-    return {
-        "prompt": prompt,
-        "completion": completion
-    }
+def format_alpaca_chatml(example):
+    text = f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
+
+    # 2. User role (instruction + optional input)
+    user_content = example["instruction"]
+    if example.get("input", "").strip():
+        user_content += f"\n{example['input']}"
+
+    text += f"<|im_start|>user\n{user_content}\n<|im_end|>\n"
+
+    # 3. Assistant role (the expected output)
+    text += f"<|im_start|>assistant\n{example['output']}\n<|im_end|>\n"
+
+    # 4. Store full ChatML text
+    example["text"] = text + tokenizer.eos_token
+
+    # 5. Optional: create prompt/completion for SFTTrainer
+    example["prompt"] = text.split(f"<|im_start|>assistant\n")[0]  # everything before assistant
+    example["completion"] = example["output"] + tokenizer.eos_token   # what the model should generate
+    return example
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
