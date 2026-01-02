@@ -74,7 +74,7 @@ if __name__ == "__main__":
     dataset = dataset.train_test_split(test_size=0.05)
 
     dataset = dataset.map(
-        format_ultrachat,
+        format_alpaca_chatml,
         num_proc=os.cpu_count()
     ).filter(lambda x: x is not None)
 
