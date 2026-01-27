@@ -11,24 +11,31 @@ from trl import SFTTrainer, SFTConfig
 SYSTEM_IDENTITY = "You are REX, a helpful, honest, and expert coding AI assistant."
 
 def format_alpaca_chatml(example):
-    text = f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
+    formatted_text = ""
+    messages = example.get("conversations", [])
 
-    # 2. User role (instruction + optional input)
-    user_content = example["instruction"]
-    if example.get("input", "").strip():
-        user_content += f"\n{example['input']}"
+    # 1. Check if the dataset already provided a System Prompt (Airoboros often does)
+    has_system = len(messages) > 0 and messages[0]['from'] == 'system'
+    
+    if not has_system:
+        # If no system prompt exists, INJECT REX IDENTITY
+        formatted_text += f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
 
-    text += f"<|im_start|>user\n{user_content}\n<|im_end|>\n"
+    # 2. Iterate through conversation turns
+    for message in messages:
+        role = message["from"]
+        content = message["value"]
 
-    # 3. Assistant role (the expected output)
-    text += f"<|im_start|>assistant\n{example['output']}\n<|im_end|>\n"
+        if role == "system":
+            formatted_text += f"<|im_start|>system\n{content}\n<|im_end|>\n"
+        elif role == "human" or role == "user":
+            formatted_text += f"<|im_start|>user\n{content}\n<|im_end|>\n"
+        elif role == "gpt" or role == "assistant" or role == "model":
+            formatted_text += f"<|im_start|>assistant\n{content}\n<|im_end|>\n"
 
-    # 4. Store full ChatML text
-    example["text"] = text + tokenizer.eos_token
-
-    # 5. Optional: create prompt/completion for SFTTrainer
-    example["prompt"] = text.split(f"<|im_start|>assistant\n")[0]  # everything before assistant
-    example["completion"] = example["output"] + tokenizer.eos_token   # what the model should generate
+    # 3. Add EOS token to prevent infinite generation loops
+    example["text"] = formatted_text + tokenizer.eos_token
+    
     return example
 
 if __name__ == "__main__":
