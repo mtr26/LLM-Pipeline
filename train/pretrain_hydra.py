@@ -14,12 +14,13 @@ def format_alpaca_chatml(example):
     formatted_text = ""
     messages = example.get("conversations", [])
 
-    # 1. Check if the dataset already provided a System Prompt (Airoboros often does)
-    has_system = len(messages) > 0 and messages[0]['from'] == 'system'
-    
+    # 1. Check if the dataset already provided a System Prompt
+    has_system = len(messages) > 0 and messages[0]["from"] == "system"
+
     if not has_system:
-        # If no system prompt exists, INJECT REX IDENTITY
-        formatted_text += f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
+        formatted_text += (
+            f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
+        )
 
     # 2. Iterate through conversation turns
     for message in messages:
@@ -28,14 +29,14 @@ def format_alpaca_chatml(example):
 
         if role == "system":
             formatted_text += f"<|im_start|>system\n{content}\n<|im_end|>\n"
-        elif role == "human" or role == "user":
+        elif role in ("human", "user"):
             formatted_text += f"<|im_start|>user\n{content}\n<|im_end|>\n"
-        elif role == "gpt" or role == "assistant" or role == "model":
+        elif role in ("gpt", "assistant", "model"):
             formatted_text += f"<|im_start|>assistant\n{content}\n<|im_end|>\n"
 
-    # 3. Add EOS token to prevent infinite generation loops
-    example["text"] = formatted_text + tokenizer.eos_token
-    
+    # 3. Write to completion instead of text
+    example["completion"] = formatted_text + tokenizer.eos_token
+
     return example
 
 if __name__ == "__main__":
