@@ -14,27 +14,36 @@ def format_alpaca_chatml(example):
     formatted_text = ""
     messages = example.get("conversations", [])
 
-    # 1. Check if the dataset already provided a System Prompt
+    # 1. Check if the dataset already provided a system prompt
     has_system = len(messages) > 0 and messages[0]["from"] == "system"
 
     if not has_system:
-        formatted_text += (
-            f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
-        )
+        formatted_text += f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
 
-    # 2. Iterate through conversation turns
+    # 2. If there is a system message in the dataset, add it
+    if has_system:
+        formatted_text += f"<|im_start|>system\n{messages[0]['value']}\n<|im_end|>\n"
+
+    # 3. Find the first user → assistant pair
+    user_msg = None
+    assistant_msg = None
     for message in messages:
         role = message["from"]
         content = message["value"]
 
-        if role == "system":
-            formatted_text += f"<|im_start|>system\n{content}\n<|im_end|>\n"
-        elif role in ("human", "user"):
-            formatted_text += f"<|im_start|>user\n{content}\n<|im_end|>\n"
-        elif role in ("gpt", "assistant", "model"):
-            formatted_text += f"<|im_start|>assistant\n{content}\n<|im_end|>\n"
+        if user_msg is None and role in ("human", "user"):
+            user_msg = content
+        elif user_msg is not None and assistant_msg is None and role in ("gpt", "assistant", "model"):
+            assistant_msg = content
+            break  # stop after the first assistant response
 
-    # 3. Write to completion instead of text
+    # 4. Add the single user → assistant turn
+    if user_msg is not None:
+        formatted_text += f"<|im_start|>user\n{user_msg}\n<|im_end|>\n"
+    if assistant_msg is not None:
+        formatted_text += f"<|im_start|>assistant\n{assistant_msg}\n<|im_end|>\n"
+
+    # 5. Write to completion
     example["completion"] = formatted_text + tokenizer.eos_token
 
     return example
