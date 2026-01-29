@@ -14,36 +14,54 @@ def format_alpaca_chatml(example):
     formatted_text = ""
     messages = example.get("conversations", [])
 
-    # 1. Check if the dataset already provided a system prompt
-    has_system = len(messages) > 0 and messages[0]["from"] == "system"
+    # -----------------------------
+    # 1. System prompt handling
+    # -----------------------------
+    if len(messages) > 0 and messages[0]["from"] == "system":
+        # Use dataset-provided system prompt
+        system_content = messages[0]["value"]
+    else:
+        # Inject our own identity
+        system_content = SYSTEM_IDENTITY
 
-    if not has_system:
-        formatted_text += f"<|im_start|>system\n{SYSTEM_IDENTITY}\n<|im_end|>\n"
+    formatted_text += (
+        f"<|im_start|>system\n{system_content}\n<|im_end|>\n"
+    )
 
-    # 2. If there is a system message in the dataset, add it
-    if has_system:
-        formatted_text += f"<|im_start|>system\n{messages[0]['value']}\n<|im_end|>\n"
-
-    # 3. Find the first user → assistant pair
+    # -----------------------------
+    # 2. Extract FIRST user → assistant pair only
+    # -----------------------------
     user_msg = None
     assistant_msg = None
+
     for message in messages:
         role = message["from"]
         content = message["value"]
 
         if user_msg is None and role in ("human", "user"):
             user_msg = content
-        elif user_msg is not None and assistant_msg is None and role in ("gpt", "assistant", "model"):
+            continue
+
+        if user_msg is not None and assistant_msg is None and role in ("gpt", "assistant", "model"):
             assistant_msg = content
-            break  # stop after the first assistant response
+            break  # HARD STOP after first assistant
 
-    # 4. Add the single user → assistant turn
+    # -----------------------------
+    # 3. Write single-turn ChatML
+    # -----------------------------
     if user_msg is not None:
-        formatted_text += f"<|im_start|>user\n{user_msg}\n<|im_end|>\n"
-    if assistant_msg is not None:
-        formatted_text += f"<|im_start|>assistant\n{assistant_msg}\n<|im_end|>\n"
+        formatted_text += (
+            f"<|im_start|>user\n{user_msg}\n<|im_end|>\n"
+        )
 
-    # 5. Write to completion
+    if assistant_msg is not None:
+        formatted_text += (
+            f"<|im_start|>assistant\n{assistant_msg}\n<|im_end|>"
+        )
+
+    # -----------------------------
+    # 4. Force termination
+    # -----------------------------
     example["completion"] = formatted_text + tokenizer.eos_token
 
     return example
