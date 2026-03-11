@@ -86,6 +86,7 @@ if __name__ == "__main__":
     )
 
     model.resize_token_embeddings(len(tokenizer))
+    model.config.vocab_size = len(tokenizer)
 
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
