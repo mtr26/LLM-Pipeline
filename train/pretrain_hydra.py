@@ -10,68 +10,44 @@ from trl import SFTTrainer, SFTConfig
 
 SYSTEM_IDENTITY = "You are REX, a helpful, honest, and expert coding AI assistant."
 
-def format_alpaca_chatml(example):
+def format_systemchat_chatml(example):
     formatted_text = ""
-    messages = example.get("conversations", [])
+    messages = example.get("messages", [])
 
-    # -----------------------------
+    if len(messages) == 0:
+        return None
+
     # 1. System prompt handling
-    # -----------------------------
-    if len(messages) > 0 and messages[0]["from"] == "system":
-        # Use dataset-provided system prompt
-        system_content = messages[0]["value"]
+    if messages[0]["role"] == "system":
+        system_content = messages[0]["content"]
+        start_idx = 1
     else:
-        # Inject our own identity
         system_content = SYSTEM_IDENTITY
+        start_idx = 0
 
     formatted_text += (
         f"<|im_start|>system\n{system_content}\n<|im_end|>\n"
     )
 
-    # -----------------------------
-    # 2. Extract FIRST user → assistant pair only
-    # -----------------------------
-    user_msg = None
-    assistant_msg = None
+    # 2. Remaining turns
+    for message in messages[start_idx:]:
+        role = message["role"]
+        content = message["content"]
 
-    for message in messages:
-        role = message["from"]
-        content = message["value"]
+        if role == "user":
+            formatted_text += f"<|im_start|>user\n{content}\n<|im_end|>\n"
+        elif role == "assistant":
+            formatted_text += f"<|im_start|>assistant\n{content}\n<|im_end|>\n"
 
-        if user_msg is None and role in ("human", "user"):
-            user_msg = content
-            continue
-
-        if user_msg is not None and assistant_msg is None and role in ("gpt", "assistant", "model"):
-            assistant_msg = content
-            break  # HARD STOP after first assistant
-
-    # -----------------------------
-    # 3. Write single-turn ChatML
-    # -----------------------------
-    if user_msg is not None:
-        formatted_text += (
-            f"<|im_start|>user\n{user_msg}\n<|im_end|>\n"
-        )
-
-    if assistant_msg is not None:
-        formatted_text += (
-            f"<|im_start|>assistant\n{assistant_msg}\n<|im_end|>"
-        )
-
-    # -----------------------------
-    # 4. Force termination
-    # -----------------------------
-    example["completion"] = formatted_text + tokenizer.eos_token
-
+    example["text"] = formatted_text + tokenizer.eos_token
     return example
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
+    parser = argparse.ArgumentParser(description="Fine-tune REX model on an arbitrary dataset")
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--dataset_name", type=str, default="databricks/databricks-dolly-15k")
+    parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--tokenizer_name", type=str, default="gpt2")
-    parser.add_argument("--output_dir", type=str, default="./dolly15k_rex_finetuned")
+    parser.add_argument("--output_dir", type=str, default="./rex_finetuned")
     parser.add_argument("--num_epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=2e-5)
@@ -93,12 +69,23 @@ if __name__ == "__main__":
         "{% endif %}"
     )
 
+    special_tokens = {
+        "additional_special_tokens": [
+            "<|im_start|>",
+            "<|im_end|>"
+        ]
+    }
+
+    tokenizer.add_special_tokens(special_tokens)
+
 
     model = REX.from_pretrained(
         args.model_path,
         device_map=None,
         low_cpu_mem_usage=False
     )
+
+    model.resize_token_embeddings(len(tokenizer))
 
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
@@ -109,7 +96,7 @@ if __name__ == "__main__":
     dataset = dataset.train_test_split(test_size=0.05)
 
     dataset = dataset.map(
-        format_alpaca_chatml,
+        format_systemchat_chatml,
         num_proc=os.cpu_count()
     ).filter(lambda x: x is not None)
 
