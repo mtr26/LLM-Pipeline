@@ -97,7 +97,8 @@ if __name__ == "__main__":
 
     dataset = dataset.map(
         format_systemchat_chatml,
-        num_proc=os.cpu_count()
+        num_proc=os.cpu_count(),
+        remove_columns=dataset["train"].column_names,
     ).filter(lambda x: x is not None)
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
