@@ -92,6 +92,7 @@ if __name__ == "__main__":
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
+    print(model.config.vocab_size)
 
     dataset = load_dataset(args.dataset_name, split="train")
     dataset = dataset.train_test_split(test_size=0.05)
