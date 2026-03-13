@@ -87,6 +87,7 @@ if __name__ == "__main__":
 
     model.resize_token_embeddings(len(tokenizer))
     model.config.vocab_size = len(tokenizer)
+    model.fc_out = nn.Linear(model.config.n_embd, len(tokenizer), bias=False)
     model.fc_out.weight.data.copy_(model.embedding.weight.data)
 
     for block in model.blocks:
