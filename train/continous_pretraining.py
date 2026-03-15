@@ -39,7 +39,7 @@ if __name__ == "__main__":
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    dataset = load_from_disk("Maynx/RexContinousPreTraining")
+    dataset = load_dataset("Maynx/RexContinousPreTraining")
     print(f"Loaded {len(dataset)} sequences.")
     dataset = dataset.train_test_split(test_size=1-args.train_val_ratio)
 
