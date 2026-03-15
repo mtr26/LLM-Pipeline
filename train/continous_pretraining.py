@@ -34,16 +34,14 @@ if __name__ == "__main__":
 
     mlflow.set_experiment("REX Pre-training")
 
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     dataset = load_from_disk("Maynx/RexContinousPreTraining")
     print(f"Loaded {len(dataset)} sequences.")
     dataset = dataset.train_test_split(test_size=1-args.train_val_ratio)
-
-
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-    
 
     model = REX.from_pretrained(
         args.model_path,
