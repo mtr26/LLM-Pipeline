@@ -8,36 +8,20 @@ from model.model import REX
 import torch
 from trl import SFTTrainer, SFTConfig
 
-SYSTEM_IDENTITY = "You are REX, a helpful, honest, and expert coding AI assistant."
-
-def format_systemchat_chatml(example):
+def format_clean_chatml(example):
     formatted_text = ""
     messages = example.get("messages", [])
 
-    if len(messages) == 0:
-        return None
+    if not messages:
+        return {"text": ""} # Return empty string instead of None for Dataset mapping safety
 
-    # 1. System prompt handling
-    if messages[0]["role"] == "system":
-        system_content = messages[0]["content"]
-        start_idx = 1
-    else:
-        system_content = SYSTEM_IDENTITY
-        start_idx = 0
-
-    formatted_text += (
-        f"<|im_start|>system\n{system_content}\n<|im_end|>\n"
-    )
-
-    # 2. Remaining turns
-    for message in messages[start_idx:]:
+    for message in messages:
         role = message["role"]
         content = message["content"]
-
-        if role == "user":
-            formatted_text += f"<|im_start|>user\n{content}\n<|im_end|>\n"
-        elif role == "assistant":
-            formatted_text += f"<|im_start|>assistant\n{content}\n<|im_end|>\n"
+        
+        # This elegantly handles 'system', 'user', and 'assistant' dynamically
+        if role in ["system", "user", "assistant"]:
+            formatted_text += f"<|im_start|>{role}\n{content}\n<|im_end|>\n"
 
     example["text"] = formatted_text + tokenizer.eos_token
     return example
@@ -99,7 +83,7 @@ if __name__ == "__main__":
     dataset = dataset.train_test_split(test_size=0.05)
 
     dataset = dataset.map(
-        format_systemchat_chatml,
+        format_clean_chatml,
         num_proc=os.cpu_count(),
         remove_columns=dataset["train"].column_names,
     ).filter(lambda x: x is not None)
