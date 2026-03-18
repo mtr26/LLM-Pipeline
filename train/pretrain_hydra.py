@@ -114,7 +114,9 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
-        dataset_text_field="text"
+        dataset_text_field="text",
+        torch_compile=True,                      
+        torch_compile_mode="default"
     )
 
     trainer = SFTTrainer(
