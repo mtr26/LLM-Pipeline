@@ -74,6 +74,7 @@ if __name__ == "__main__":
     model.fc_out = torch.nn.Linear(model.config.n_embd, len(tokenizer), bias=False)
     model.fc_out.weight.data.copy_(model.embedding.weight.data)
 
+    model.config.max_len = args.max_length
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
