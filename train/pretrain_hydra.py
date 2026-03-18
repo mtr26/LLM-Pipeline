@@ -95,7 +95,7 @@ if __name__ == "__main__":
         output_dir="./out",
         max_length=args.max_length,           
         packing=False,                  
-        num_train_epochs=1,
+        num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
         gradient_checkpointing=False,
