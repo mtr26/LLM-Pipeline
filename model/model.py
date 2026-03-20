@@ -379,9 +379,8 @@ class REX(PreTrainedModel, GenerationMixin):
         )
 
 
-# The classic .generate() method from transformers does not my model well.
 @torch.no_grad()
-def generate_texts(
+def generate_texts_kv(
     model,
     tokenizer,
     prompts,
@@ -389,10 +388,10 @@ def generate_texts(
     temperature=1.0,
     top_k=None,
     top_p=None,
-    repetition_penalty=1.0
+    repetition_penalty=1.0,
 ):
     """
-    Custom text generation supporting temperature, top-k, top-p (nucleus sampling), 
+    Custom text generation with KV caching support, temperature, top-k/top-p,
     and repetition penalty.
     """
     model.eval()
@@ -403,11 +402,23 @@ def generate_texts(
     generated = input_ids.clone()
 
     eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    stop_token_id = tokenizer.convert_tokens_to_ids("<im_stop>")
     finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
 
-    for _ in range(max_length):
-        outputs = model(input_ids=generated, use_cache=False)
+    # Initialize past_key_values
+    past_key_values = None
+
+    for step in range(max_length):
+        # Only feed the last token if past_key_values exist
+        cur_input_ids = generated[:, -1:] if past_key_values is not None else generated
+
+        outputs = model(
+            input_ids=cur_input_ids,
+            past_key_values=past_key_values,
+            use_cache=True
+        )
         logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
+        past_key_values = outputs.past_key_values  # Update cache
 
         # Apply repetition penalty
         if repetition_penalty != 1.0:
@@ -430,17 +441,106 @@ def generate_texts(
             sorted_logits, sorted_indices = torch.sort(logits, descending=True)
             cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
             mask = cumulative_probs > top_p
-            mask[:, 1:] = mask[:, :-1].clone()  # Keep first token above threshold
+            mask[:, 1:] = mask[:, :-1].clone()
             mask[:, 0] = False
             sorted_logits[mask] = -float("inf")
             logits = torch.zeros_like(logits).scatter(1, sorted_indices, sorted_logits)
 
+        # Sample next token
         probs = torch.nn.functional.softmax(logits, dim=-1)
         next_token = torch.multinomial(probs, num_samples=1)
         generated = torch.cat((generated, next_token), dim=1)
+
+        # Stop if all sequences finished
         if eos_token_id is not None:
             finished |= (next_token.squeeze(-1) == eos_token_id)
             if finished.all():
                 break
 
     return tokenizer.batch_decode(generated, skip_special_tokens=True)
+
+  
+@torch.no_grad()
+def generate_texts_kv_formated(
+    model,
+    tokenizer,
+    prompts,
+    max_length=50,
+    temperature=1.0,
+    top_k=None,
+    top_p=None,
+    repetition_penalty=1.0
+):
+    """"
+    Custom text generation with KV caching support, temperature, top-k/top-p,
+    and repetition penalty.
+    """
+    model.eval()
+    device = next(model.parameters()).device
+
+    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
+    input_ids = inputs.input_ids.to(device)
+    generated = input_ids.clone()
+
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    stop_token_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
+
+    # Initialize past_key_values
+    past_key_values = None
+
+    for step in range(max_length):
+        # Only feed the last token if past_key_values exist
+        cur_input_ids = generated[:, -1:] if past_key_values is not None else generated
+
+        outputs = model(
+            input_ids=cur_input_ids,
+            past_key_values=past_key_values,
+            use_cache=True
+        )
+        logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
+        past_key_values = outputs.past_key_values  # Update cache
+
+        # Apply repetition penalty
+        if repetition_penalty != 1.0:
+            for i in range(generated.size(0)):
+                for token_id in set(generated[i].tolist()):
+                    if logits[i, token_id] < 0:
+                        logits[i, token_id] *= repetition_penalty
+                    else:
+                        logits[i, token_id] /= repetition_penalty
+
+        # Top-k filtering
+        if top_k is not None and top_k > 0:
+            values, indices = torch.topk(logits, top_k)
+            logits_filtered = torch.full_like(logits, -float("inf"))
+            logits_filtered.scatter_(1, indices, values)
+            logits = logits_filtered
+
+        # Top-p (nucleus) filtering
+        if top_p is not None and 0.0 < top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+            mask = cumulative_probs > top_p
+            mask[:, 1:] = mask[:, :-1].clone()
+            mask[:, 0] = False
+            sorted_logits[mask] = -float("inf")
+            logits = torch.zeros_like(logits).scatter(1, sorted_indices, sorted_logits)
+
+        # Sample next token
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        generated = torch.cat((generated, next_token), dim=1)
+
+        next_token_flat = next_token.squeeze(-1)
+
+        if eos_token_id is not None:
+            finished |= (next_token_flat == eos_token_id)
+
+        if stop_token_id is not None:
+            finished |= (next_token_flat == stop_token_id)
+
+        if finished.all():
+            break
+
+    return tokenizer.batch_decode(generated, skip_special_tokens=False)
