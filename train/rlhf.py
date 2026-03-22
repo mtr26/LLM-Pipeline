@@ -37,6 +37,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=2e-5)
     parser.add_argument("--max_length", type=int, default=1024)
+    parser.add_argument("--dataset_name", type=str, required=True)
     args = parser.parse_args()
     
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
