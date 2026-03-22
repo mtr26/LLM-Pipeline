@@ -105,7 +105,7 @@ if __name__ == "__main__":
     # =========================
     trainer = DPOTrainer(
         model=model,
-        ref_model=None, # TRL will implicitly copy the active model
+        ref_model=ref_model, # TRL will implicitly copy the active model
         args=config,
         train_dataset=dataset,
         processing_class=tokenizer,
