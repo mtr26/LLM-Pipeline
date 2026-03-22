@@ -4,6 +4,8 @@ from trl import DPOTrainer, DPOConfig
 import torch
 import argparse
 from model.model import REX
+import copy
+
 
 def format_chatml(user):
     return f"""<|im_start|>user\n{user}\n<|im_end|>\n<|im_start|>assistant\n"""
@@ -71,6 +73,13 @@ if __name__ == "__main__":
 
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
+
+    ref_model = copy.deepcopy(model)
+    ref_model.eval()
+
+    # Freeze ref_model
+    for p in ref_model.parameters():
+        p.requires_grad = False
 
     dataset = load_dataset(args.dataset_name, split="train_prefs")
 
