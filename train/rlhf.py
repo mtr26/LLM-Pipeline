@@ -98,7 +98,8 @@ if __name__ == "__main__":
         logging_steps=500,
         max_length=args.max_length,           # Expanded for UF
         bf16=True,                 # Hardware acceleration
-        gradient_checkpointing=False
+        gradient_checkpointing=False,
+        max_grad_norm=1.0
     )
 
     # =========================
