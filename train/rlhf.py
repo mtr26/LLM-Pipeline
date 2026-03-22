@@ -88,7 +88,6 @@ if __name__ == "__main__":
         num_train_epochs=args.num_epochs,
         logging_steps=10,
         max_length=args.max_length,           # Expanded for UF
-        max_prompt_length=args.max_length / 2,    # Expanded for UF
         bf16=True,                 # Hardware acceleration
     )
 
@@ -100,6 +99,7 @@ if __name__ == "__main__":
         ref_model=None, # TRL will implicitly copy the active model
         args=config,
         train_dataset=dataset,
+        max_prompt_length=args.max_length / 2,    # Expanded for UF
         tokenizer=tokenizer,
     )
 
