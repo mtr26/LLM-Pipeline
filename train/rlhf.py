@@ -99,7 +99,7 @@ if __name__ == "__main__":
         ref_model=None, # TRL will implicitly copy the active model
         args=config,
         train_dataset=dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
 
     # =========================
