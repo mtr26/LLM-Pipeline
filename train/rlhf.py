@@ -95,7 +95,7 @@ if __name__ == "__main__":
         lr_scheduler_type="cosine",
         warmup_ratio=0.1,
         num_train_epochs=args.num_epochs,
-        logging_steps=10,
+        logging_steps=500,
         max_length=args.max_length,           # Expanded for UF
         bf16=True,                 # Hardware acceleration
         gradient_checkpointing=False
