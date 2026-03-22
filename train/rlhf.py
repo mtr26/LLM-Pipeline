@@ -72,7 +72,7 @@ if __name__ == "__main__":
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
-    dataset = load_dataset(args.dataset_name, split="train")
+    dataset = load_dataset(args.dataset_name, split="train_prefs")
 
     dataset = dataset.map(preprocess_uf)
 
