@@ -69,10 +69,12 @@ if __name__ == "__main__":
         low_cpu_mem_usage=False
     )
 
+    """
     model.resize_token_embeddings(len(tokenizer))
     model.config.vocab_size = len(tokenizer)
     model.fc_out = torch.nn.Linear(model.config.n_embd, len(tokenizer), bias=False)
     model.fc_out.weight.data.copy_(model.embedding.weight.data)
+    """
 
     model.config.max_len = args.max_length
     for block in model.blocks:
