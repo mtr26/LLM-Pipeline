@@ -29,6 +29,9 @@ class RexKDTrainer(SFTTrainer):
         """
         labels = inputs.get("labels")
 
+        valid_keys = ["input_ids", "attention_mask", "labels"]
+        inputs = {k: v for k, v in inputs.items() if k in valid_keys}
+
         # 1. Forward Pass: Student (Rex)
         outputs = model(**inputs)
         student_logits = outputs.logits
