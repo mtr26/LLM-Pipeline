@@ -68,6 +68,14 @@ class RexKDTrainer(SFTTrainer):
         # 5. Combine Losses
         loss = (self.alpha * ce_loss) + ((1.0 - self.alpha) * kl_loss)
 
+        # Log the split metrics so you can watch the tug-of-war live
+        if self.state.global_step % self.args.logging_steps == 0:
+            self.log({
+                "ce_loss": ce_loss.item(),
+                "kl_loss": kl_loss.item(),
+                "teacher_student_balance": (ce_loss / (kl_loss + 1e-8)).item()
+            })
+
         return (loss, outputs) if return_outputs else loss
 
 
