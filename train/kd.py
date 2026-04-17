@@ -3,7 +3,7 @@ import argparse
 import copy
 import mlflow
 from datasets import load_dataset
-from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling, AutoModelForCausalLM
 from model.model import REX
 import torch
 import torch.nn.functional as F
