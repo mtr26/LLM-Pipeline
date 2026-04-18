@@ -100,6 +100,27 @@ def format_clean_chatml(example):
     example["text"] = formatted_text + tokenizer.eos_token
     return example
 
+def format_recast_chatml(example):
+    prompt = example.get("winner_prompt", "").strip()
+    response = example.get("response_of_winner_prompt", "").strip()
+
+    # Skip bad samples safely
+    if not prompt or not response:
+        return {"text": ""}
+
+    formatted_text = ""
+
+    # Optional system prompt (VERY recommended for REX)
+    formatted_text += "<|im_start|>system\nYou are REX. Follow instructions exactly.\n<|im_end|>\n"
+
+    # User message
+    formatted_text += f"<|im_start|>user\n{prompt}\n<|im_end|>\n"
+
+    # Assistant message
+    formatted_text += f"<|im_start|>assistant\n{response}\n<|im_end|>\n"
+
+    return {"text": formatted_text + tokenizer.eos_token}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine-tune REX model on an arbitrary dataset")
     parser.add_argument("--model_path", type=str, required=True)
@@ -159,12 +180,11 @@ if __name__ == "__main__":
     print(f"Model loaded with {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
 
     dataset = load_dataset(args.dataset_name, split="train")
-    dataset = dataset.shuffle(seed=42).select(range(100000))
     dataset = dataset.train_test_split(test_size=0.05)
     
 
     dataset = dataset.map(
-        format_clean_chatml,
+        format_recast_chatml,
         num_proc=os.cpu_count(),
         remove_columns=dataset["train"].column_names,
     ).filter(lambda x: x is not None)
