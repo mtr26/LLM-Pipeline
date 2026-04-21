@@ -169,7 +169,7 @@ if __name__ == "__main__":
         "Maynx/Rex-Mistral-KD-Teacher",
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        attn_implementation="flash_attention_3" # Keeps inference fast
+        attn_implementation="flash_attention_2" # Keeps inference fast
     )
 
     model.resize_token_embeddings(len(tokenizer))
