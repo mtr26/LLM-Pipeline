@@ -188,7 +188,7 @@ if __name__ == "__main__":
     
 
     dataset = dataset.map(
-        format_recast_chatml,
+        format_clean_chatml,
         num_proc=os.cpu_count(),
         remove_columns=dataset["train"].column_names,
     ).filter(lambda x: x is not None)
