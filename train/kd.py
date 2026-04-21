@@ -168,10 +168,13 @@ if __name__ == "__main__":
         "Maynx/Rex-Mistral-KD-Teacher",
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        attn_implementation="flash_attention_2" # Keeps inference fast
+        attn_implementation="flash_attention_3" # Keeps inference fast
     )
 
-    
+    model.resize_token_embeddings(len(tokenizer))
+    model.config.vocab_size = len(tokenizer)
+    model.fc_out = torch.nn.Linear(model.config.n_embd, len(tokenizer), bias=False)
+    model.fc_out.weight.data.copy_(model.embedding.weight.data)
 
     model.config.max_len = args.max_length
     for block in model.blocks:
@@ -202,7 +205,7 @@ if __name__ == "__main__":
         gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
-        logging_steps=500,
+        logging_steps=1000,
         save_strategy="no",
         eval_strategy="epoch",
         bf16=bf16,
