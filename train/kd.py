@@ -207,7 +207,7 @@ if __name__ == "__main__":
         gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
-        logging_steps=1000,
+        logging_steps=100,
         save_strategy="no",
         eval_strategy="epoch",
         bf16=bf16,
