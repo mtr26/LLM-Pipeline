@@ -213,7 +213,7 @@ if __name__ == "__main__":
         fp16=not bf16,
         optim="adamw_torch_fused",
         max_grad_norm=1.0,
-        warmup_ratio=0.03,
+        warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         report_to="mlflow",
         run_name="REX_SFT_Run",
