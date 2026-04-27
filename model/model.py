@@ -58,12 +58,13 @@ def scaled_dot_product_attention_grouped_flash(
         mask: torch.Tensor = None
         ) -> torch.Tensor:
     """
-    Compute scaled dot-product attention with grouped queries.
+    Compute scaled dot-product attention with grouped queries using native GQA support.
+    Requires PyTorch >= 2.5. No K/V expansion needed — handled internally by SDPA.
     
     Args:
-        queries (torch.Tensor): Query tensor of shape (B, T_q, C).
-        keys (torch.Tensor): Key tensor of shape (B, T_k, C).
-        values (torch.Tensor): Value tensor of shape (B, T_v, C).
+        queries (torch.Tensor): Query tensor of shape (B, L, H_q, D).
+        keys (torch.Tensor): Key tensor of shape (B, L, H_kv, D).
+        values (torch.Tensor): Value tensor of shape (B, L, H_kv, D).
         scale (float): Scaling factor for the dot product.
         
     Returns:
@@ -73,14 +74,6 @@ def scaled_dot_product_attention_grouped_flash(
     k = keys.permute(0, 2, 1, 3)
     v = values.permute(0, 2, 1, 3)
 
-    bq, hq, nq, dq = q.shape
-    bk, hk, nk, dk = k.shape
-    bv, hv, nv, dv = v.shape
-
-    repeat = hq // hk
-    k = k.repeat_interleave(repeat, dim=1) 
-    v = v.repeat_interleave(repeat, dim=1)
-
     with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
         out = F.scaled_dot_product_attention(
             q.contiguous(), 
@@ -89,7 +82,8 @@ def scaled_dot_product_attention_grouped_flash(
             attn_mask=mask,
             dropout_p=dropout_p,
             is_causal=is_causal,
-            scale=scale
+            scale=scale,
+            enable_gqa=True
         )
     out = out.permute(0, 2, 1, 3)
 
