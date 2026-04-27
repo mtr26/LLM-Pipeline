@@ -78,8 +78,13 @@ def scaled_dot_product_attention_grouped_flash(
     bv, hv, nv, dv = v.shape
 
     repeat = hq // hk
-    k = k.repeat_interleave(repeat, dim=1) 
-    v = v.repeat_interleave(repeat, dim=1)
+    
+    # Reshape Q: (B, H_k, repeat, T_q, D)
+    q = q.view(bq, hk, repeat, nq, dq)
+    
+    # Reshape K and V to add a broadcast dimension: (B, H_k, 1, T_k, D)
+    k = k.unsqueeze(2)
+    v = v.unsqueeze(2)
 
     with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
         out = F.scaled_dot_product_attention(
@@ -91,6 +96,7 @@ def scaled_dot_product_attention_grouped_flash(
             is_causal=is_causal,
             scale=scale
         )
+    out = out.reshape(bq, hq, nq, dq)
     out = out.permute(0, 2, 1, 3)
 
     return out
@@ -179,14 +185,14 @@ class GroupedQueryAttention(nn.Module):
         x2 = x[..., x.shape[-1] // 2 :]
         return torch.cat((-x2, x1), dim=-1)
 
-    def apply_rotary_pos_emb(self, q, k, seq_len):
+    def apply_rotary_pos_emb(self, q, k, seq_len, offset: int = 0):
     # Transpose to [B, H, L, D] for RoPE rotation
         q = q.permute(0, 2, 1, 3)  # [B, H, L, D]
         k = k.permute(0, 2, 1, 3)  # [B, H_kv, L, D]
     
         # Apply rotary embeddings
-        cos = self.cos_cached[:, :, :seq_len, :].to(dtype=q.dtype)
-        sin = self.sin_cached[:, :, :seq_len, :].to(dtype=q.dtype)
+        cos = self.cos_cached[:, :, offset:seq_len+offset, :].to(dtype=q.dtype)
+        sin = self.sin_cached[:, :, offset:seq_len+offset, :].to(dtype=q.dtype)
         
         q_embed = (q * cos) + (self.rotate_half(q) * sin)
         k_embed = (k * cos) + (self.rotate_half(k) * sin)
@@ -229,9 +235,11 @@ class GroupedQueryAttention(nn.Module):
             key: torch.Tensor, 
             value: torch.Tensor, 
             mask: torch.Tensor = None,
-            past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+            past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+            cache_position=None,
             use_cache: bool = False,
         ) -> torch.Tensor:
+        past_kv = past_key_values
         q = self.q_proj(query)
         k = self.k_proj(key)
         v = self.v_proj(value)
@@ -251,20 +259,34 @@ class GroupedQueryAttention(nn.Module):
 
         # Apply RoPE BEFORE concatenating with past (did not work well)
         if self.apply_rotary:
-            q, k = self.apply_rotary_pos_emb(q, k, nk)
+            past_len = past_kv[0].shape[1] if past_kv is not None else 0
+            q, k = self.apply_rotary_pos_emb(q, k, nk, offset=past_len)
+
+        is_causal = self.is_causal
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            k = torch.cat([past_k, k], dim=1)
+            v = torch.cat([past_v, v], dim=1)
+            is_causal = False
 
 
         out = scaled_dot_product_attention_grouped_flash(
             q, k, v, 
             self.scale, 
-            self.is_causal, 
+            is_causal, 
             mask=mask,
             dropout_p=self.dropout.p if self.training else 0.0
         )
         out = out.reshape(out.size(0), out.size(1), out.size(2) * out.size(3))
         out = self.out_proj(out)
         out = self.dropout(out)
-        return out, None
+
+        if use_cache:
+            new_kv = (k.detach(), v.detach())
+        else:
+            new_kv = None
+
+        return out, new_kv
 
 
 class MLP(nn.Module):
@@ -299,7 +321,7 @@ class Block(nn.Module):
             query=attn_input, 
             key=attn_input, 
             value=attn_input, 
-            past_kv=past_kv, 
+            past_key_values=past_kv, 
             use_cache=use_cache
         )
         x = x + attn_out
@@ -345,6 +367,7 @@ class REX(PreTrainedModel, GenerationMixin):
             inputs_embeds: Optional[torch.Tensor] = None,
             attention_mask=None,
             position_ids=None,
+            cache_position=None,
             return_dict: bool = True
         ) -> CausalLMOutputWithPast:
         
@@ -377,6 +400,73 @@ class REX(PreTrainedModel, GenerationMixin):
             logits=logits,
             past_key_values=new_past_key_values if use_cache else None,
         )
+
+
+# The classic .generate() method from transformers does not my model well.
+@torch.no_grad()
+def generate_texts(
+    model,
+    tokenizer,
+    prompts,
+    max_length=50,
+    temperature=1.0,
+    top_k=None,
+    top_p=None,
+    repetition_penalty=1.0
+):
+    """
+    Custom text generation supporting temperature, top-k, top-p (nucleus sampling), 
+    and repetition penalty.
+    """
+    model.eval()
+    device = next(model.parameters()).device
+
+    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
+    input_ids = inputs.input_ids.to(device)
+    generated = input_ids.clone()
+
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
+
+    for _ in range(max_length):
+        outputs = model(input_ids=generated, use_cache=False)
+        logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
+
+        # Apply repetition penalty
+        if repetition_penalty != 1.0:
+            for i in range(generated.size(0)):
+                for token_id in set(generated[i].tolist()):
+                    if logits[i, token_id] < 0:
+                        logits[i, token_id] *= repetition_penalty
+                    else:
+                        logits[i, token_id] /= repetition_penalty
+
+        # Top-k filtering
+        if top_k is not None and top_k > 0:
+            values, indices = torch.topk(logits, top_k)
+            logits_filtered = torch.full_like(logits, -float("inf"))
+            logits_filtered.scatter_(1, indices, values)
+            logits = logits_filtered
+
+        # Top-p (nucleus) filtering
+        if top_p is not None and 0.0 < top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+            mask = cumulative_probs > top_p
+            mask[:, 1:] = mask[:, :-1].clone()  # Keep first token above threshold
+            mask[:, 0] = False
+            sorted_logits[mask] = -float("inf")
+            logits = torch.zeros_like(logits).scatter(1, sorted_indices, sorted_logits)
+
+        probs = torch.nn.functional.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        generated = torch.cat((generated, next_token), dim=1)
+        if eos_token_id is not None:
+            finished |= (next_token.squeeze(-1) == eos_token_id)
+            if finished.all():
+                break
+
+    return tokenizer.batch_decode(generated, skip_special_tokens=True)
 
 
 @torch.no_grad()
@@ -544,70 +634,3 @@ def generate_texts_kv_formated(
             break
 
     return tokenizer.batch_decode(generated, skip_special_tokens=False)
-
-
-@torch.no_grad()
-def generate_texts(
-    model,
-    tokenizer,
-    prompts,
-    max_length=50,
-    temperature=1.0,
-    top_k=None,
-    top_p=None,
-    repetition_penalty=1.0
-):
-    """
-    Custom text generation supporting temperature, top-k, top-p (nucleus sampling), 
-    and repetition penalty.
-    """
-    model.eval()
-    device = next(model.parameters()).device
-
-    inputs = tokenizer(prompts, return_tensors="pt", padding=False, truncation=True)
-    input_ids = inputs.input_ids.to(device)
-    generated = input_ids.clone()
-
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    finished = torch.zeros(input_ids.size(0), dtype=torch.bool, device=device)
-
-    for _ in range(max_length):
-        outputs = model(input_ids=generated, use_cache=False)
-        logits = outputs.logits[:, -1, :] / max(temperature, 1e-8)
-
-        # Apply repetition penalty
-        if repetition_penalty != 1.0:
-            for i in range(generated.size(0)):
-                for token_id in set(generated[i].tolist()):
-                    if logits[i, token_id] < 0:
-                        logits[i, token_id] *= repetition_penalty
-                    else:
-                        logits[i, token_id] /= repetition_penalty
-
-        # Top-k filtering
-        if top_k is not None and top_k > 0:
-            values, indices = torch.topk(logits, top_k)
-            logits_filtered = torch.full_like(logits, -float("inf"))
-            logits_filtered.scatter_(1, indices, values)
-            logits = logits_filtered
-
-        # Top-p (nucleus) filtering
-        if top_p is not None and 0.0 < top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-            mask = cumulative_probs > top_p
-            mask[:, 1:] = mask[:, :-1].clone()  # Keep first token above threshold
-            mask[:, 0] = False
-            sorted_logits[mask] = -float("inf")
-            logits = torch.zeros_like(logits).scatter(1, sorted_indices, sorted_logits)
-
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-        generated = torch.cat((generated, next_token), dim=1)
-        if eos_token_id is not None:
-            finished |= (next_token.squeeze(-1) == eos_token_id)
-            if finished.all():
-                break
-
-    return tokenizer.batch_decode(generated, skip_special_tokens=True)
-
