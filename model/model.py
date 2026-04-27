@@ -89,7 +89,6 @@ def scaled_dot_product_attention_grouped_flash(
 
     return out
 
-
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
@@ -320,6 +319,8 @@ class Block(nn.Module):
 
 class REX(PreTrainedModel, GenerationMixin):
     config_class = REXConfig
+    supports_gradient_checkpointing = True
+    gradient_checkpointing = False
     def __init__(self, config: REXConfig):
         super().__init__(config)
         self.config = config
@@ -361,6 +362,9 @@ class REX(PreTrainedModel, GenerationMixin):
         
         x = self.embedding(input_ids)
 
+        if self.gradient_checkpointing and self.training:
+            use_cache = False
+
         new_past_key_values = [] if use_cache else None
         
         if past_key_values is None:
@@ -368,7 +372,12 @@ class REX(PreTrainedModel, GenerationMixin):
 
         for i, block in enumerate(self.blocks):
             past_kv = past_key_values[i]
-            x, new_kv = block(x, past_kv, use_cache)
+            if self.gradient_checkpointing and self.training:
+                x, new_kv = self._gradient_checkpointing_func(
+                    block.__call__, x, None, False
+                )
+            else:
+                x, new_kv = block(x, past_kv, use_cache)
             if use_cache:
                 new_past_key_values.append(new_kv)
         x = self.ln_f(x)
