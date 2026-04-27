@@ -78,13 +78,8 @@ def scaled_dot_product_attention_grouped_flash(
     bv, hv, nv, dv = v.shape
 
     repeat = hq // hk
-    
-    # Reshape Q: (B, H_k, repeat, T_q, D)
-    q = q.view(bq, hk, repeat, nq, dq)
-    
-    # Reshape K and V to add a broadcast dimension: (B, H_k, 1, T_k, D)
-    k = k.unsqueeze(2)
-    v = v.unsqueeze(2)
+    k = k.repeat_interleave(repeat, dim=1) 
+    v = v.repeat_interleave(repeat, dim=1)
 
     with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
         out = F.scaled_dot_product_attention(
@@ -96,7 +91,6 @@ def scaled_dot_product_attention_grouped_flash(
             is_causal=is_causal,
             scale=scale
         )
-    out = out.reshape(bq, hq, nq, dq)
     out = out.permute(0, 2, 1, 3)
 
     return out
