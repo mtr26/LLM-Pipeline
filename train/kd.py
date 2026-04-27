@@ -132,6 +132,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=2e-5)
     parser.add_argument("--max_length", type=int, default=1024)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
     args = parser.parse_args()
 
     mlflow.set_experiment("REX Fine-tuning")
@@ -202,7 +203,7 @@ if __name__ == "__main__":
         packing=False,                  
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
@@ -214,7 +215,7 @@ if __name__ == "__main__":
         optim="adamw_torch_fused",
         max_grad_norm=1.0,
         warmup_ratio=0.05,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="constant_with_warmup",
         report_to="mlflow",
         run_name="REX_SFT_Run",
         dataset_text_field="text"
