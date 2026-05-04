@@ -8,41 +8,51 @@ from model.model import REX
 import torch
 from trl import SFTTrainer, SFTConfig
 
-ALPACA_PROMPT = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
+def format_clean_chatml(example):
+    formatted_text = ""
+    messages = example.get("messages", [])
 
-### Instruction:
-{instruction}
+    if not messages:
+        return {"text": ""} # Return empty string instead of None for Dataset mapping safety
 
-### Input:
-{input}
+    for message in messages:
+        role = message["role"]
+        content = message["content"]
+        
+        # This elegantly handles 'system', 'user', and 'assistant' dynamically
+        if role in ["system", "user", "assistant"]:
+            formatted_text += f"<|im_start|>{role}\n{content}\n<|im_end|>\n"
 
-### Response:
-"""
+    example["text"] = formatted_text + tokenizer.eos_token
+    return example
 
-ALPACA_NO_INPUT_PROMPT = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+def format_recast_chatml(example):
+    prompt = example.get("winner_prompt", "").strip()
+    response = example.get("response_of_winner_prompt", "").strip()
 
-### Instruction:
-{instruction}
+    # Skip bad samples safely
+    if not prompt or not response:
+        return {"text": ""}
 
-### Response:
-"""
+    formatted_text = ""
 
-def format_to_prompt_completion(example):
-    messages = example["messages"]
-    user = next((m["content"] for m in messages if m["role"] == "user"), None)
-    assistant = next((m["content"] for m in messages if m["role"] == "assistant"), None)
+    # Optional system prompt (VERY recommended for REX)
+    formatted_text += "<|im_start|>system\nYou are REX. Follow instructions exactly.\n<|im_end|>\n"
 
-    prompt = "### Instruction:\n" + user + "\n\n### Response:\n"
-    completion = assistant + tokenizer.eos_token
-    return {"prompt": prompt, "completion": completion}
-    
+    # User message
+    formatted_text += f"<|im_start|>user\n{prompt}\n<|im_end|>\n"
+
+    # Assistant message
+    formatted_text += f"<|im_start|>assistant\n{response}\n<|im_end|>\n"
+
+    return {"text": formatted_text + tokenizer.eos_token}
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tune REX model on Dolly 15k.")
+    parser = argparse.ArgumentParser(description="Fine-tune REX model on an arbitrary dataset")
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--dataset_name", type=str, default="databricks/databricks-dolly-15k")
+    parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--tokenizer_name", type=str, default="gpt2")
-    parser.add_argument("--output_dir", type=str, default="./dolly15k_rex_finetuned")
+    parser.add_argument("--output_dir", type=str, default="./rex_finetuned")
     parser.add_argument("--num_epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--learning_rate", type=float, default=2e-5)
@@ -52,8 +62,27 @@ if __name__ == "__main__":
     mlflow.set_experiment("REX Fine-tuning")
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
-    tokenizer.pad_token = tokenizer.unk_token
-    tokenizer.pad_token_id = tokenizer.unk_token_id
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    tokenizer.chat_template = (
+        "{% for message in messages %}"
+        "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% endif %}"
+    )
+
+    special_tokens = {
+        "additional_special_tokens": [
+            "<|im_start|>",
+            "<|im_end|>"
+        ]
+    }
+
+    tokenizer.add_special_tokens(special_tokens)
+
 
     model = REX.from_pretrained(
         args.model_path,
@@ -61,6 +90,14 @@ if __name__ == "__main__":
         low_cpu_mem_usage=False
     )
 
+    """
+    model.resize_token_embeddings(len(tokenizer))
+    model.config.vocab_size = len(tokenizer)
+    model.fc_out = torch.nn.Linear(model.config.n_embd, len(tokenizer), bias=False)
+    model.fc_out.weight.data.copy_(model.embedding.weight.data)
+    """
+
+    model.config.max_len = args.max_length
     for block in model.blocks:
         block.attention.generate_sin_cos_pos_emb(model.config.max_len)
 
@@ -69,7 +106,11 @@ if __name__ == "__main__":
     dataset = load_dataset(args.dataset_name, split="train")
     dataset = dataset.train_test_split(test_size=0.05)
 
-    dataset = dataset.map(format_to_prompt_completion, num_proc=os.cpu_count())
+    dataset = dataset.map(
+        format_recast_chatml,
+        num_proc=os.cpu_count(),
+        remove_columns=dataset["train"].column_names,
+    ).filter(lambda x: x is not None)
 
     # safe guard usually only Ampere or newer GPUs support bf16 (no T4 or P100)
     bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -78,16 +119,15 @@ if __name__ == "__main__":
         output_dir="./out",
         max_length=args.max_length,           
         packing=False,                  
-        num_train_epochs=1,
+        num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=1,
         gradient_checkpointing=False,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
-        logging_steps=10,
+        logging_steps=2000,
         save_strategy="no",
-        eval_strategy="steps",
-        eval_steps=100,
+        eval_strategy="epoch",
         bf16=bf16,
         fp16=not bf16,
         optim="adamw_torch_fused",

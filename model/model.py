@@ -165,7 +165,18 @@ class GroupedQueryAttention(nn.Module):
         if self.apply_rotary:
             self.register_buffer("cos_cached", None, persistent=False)
             self.register_buffer("sin_cached", None, persistent=False)
-            self.generate_sin_cos_pos_emb(max_length)
+
+    def _rope_cache_is_valid(self, seq_len: int, offset: int = 0, device: Optional[torch.device] = None) -> bool:
+        required_seq_len = seq_len + offset
+        if self.cos_cached is None or self.sin_cached is None:
+            return False
+        if device is not None and (self.cos_cached.device != device or self.sin_cached.device != device):
+            return False
+        return self.cos_cached.size(2) >= required_seq_len and self.sin_cached.size(2) >= required_seq_len
+
+    def reset_rope_cache(self):
+        self.cos_cached = None
+        self.sin_cached = None
 
     def rotate_half(self, x):
         x1 = x[..., : x.shape[-1] // 2]
@@ -176,6 +187,9 @@ class GroupedQueryAttention(nn.Module):
     # Transpose to [B, H, L, D] for RoPE rotation
         q = q.permute(0, 2, 1, 3)  # [B, H, L, D]
         k = k.permute(0, 2, 1, 3)  # [B, H_kv, L, D]
+
+        if not self._rope_cache_is_valid(seq_len, offset=offset, device=q.device):
+            self.generate_sin_cos_pos_emb(seq_len + offset, offset=0, device=q.device)
     
         # Apply rotary embeddings
         cos = self.cos_cached[:, :, offset:seq_len+offset, :].to(dtype=q.dtype)
@@ -190,14 +204,24 @@ class GroupedQueryAttention(nn.Module):
     
         return q_embed, k_embed
 
-    def generate_sin_cos_pos_emb(self, seq_len, rope_theta=10000, rope_factor=8.0, offset: int = 0):
+    def generate_sin_cos_pos_emb(
+        self,
+        seq_len,
+        rope_theta=10000,
+        rope_factor=8.0,
+        offset: int = 0,
+        device: Optional[torch.device] = None,
+    ):
         base, rope_factor, dim, max_seq_len = (
             rope_theta,
             rope_factor,
             self.head_dim,
             self.max_length
         )
-        device = self.q_proj.weight.device
+        device = device or self.q_proj.weight.device
+        if device.type == "meta":
+            self.reset_rope_cache()
+            return None, None
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
         if rope_factor > 1.0:
             seq_len_eff = max(seq_len + offset, max_seq_len)
@@ -321,6 +345,7 @@ class REX(PreTrainedModel, GenerationMixin):
     config_class = REXConfig
     supports_gradient_checkpointing = True
     gradient_checkpointing = False
+
     def __init__(self, config: REXConfig):
         super().__init__(config)
         self.config = config
@@ -329,6 +354,16 @@ class REX(PreTrainedModel, GenerationMixin):
         self.ln_f = RMSNorm(config.n_embd)
         self.fc_out = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.post_init()
+
+    def reset_rope_cache(self):
+        for block in self.blocks:
+            block.attention.reset_rope_cache()
+
+    @classmethod
+    def from_pretrained(cls, *model_args, **kwargs):
+        model = super().from_pretrained(*model_args, **kwargs)
+        model.reset_rope_cache()
+        return model
 
     def get_input_embeddings(self):
         return self.embedding
@@ -630,4 +665,4 @@ def generate_texts_kv_formated(
         if finished.all():
             break
 
-    return tokenizer.batch_decode(generated, skip_special_tokens=False)
+    return tokenizer.batch_decode(generated, skip_special_tokens=True)

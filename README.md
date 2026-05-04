@@ -11,7 +11,7 @@ This project demonstrates how to build a small LLM pipeline from scratch, coveri
 - **Custom Transformer Architecture**: Grouped-Query Attention (GQA), Rotary Positional Embeddings (RoPE), RMSNorm, and Flash Attention via PyTorch SDPA
 - **Hugging Face Integration**: Full compatibility with `PreTrainedModel`, `Trainer`, and model hub
 - **Hydra Configuration**: Clean, hierarchical config management for training and inference
-- **Mixed Precision Training**: FP16 support for efficient training and inference
+- **Mixed Precision Training**: BF16 support for efficient training and inference
 - **MLflow Tracking**: Comprehensive experiment tracking and metrics visualization
 - **FastAPI Inference**: Production-ready REST API for model deployment
 - **Docker Support**: CPU and GPU containerized environments with Docker Compose
@@ -81,12 +81,10 @@ Test the pretrained model interactively using `train/test.py`:
 python train/test.py
 ```
 
-This loads the model from Hugging Face Hub (`Maynx/REX_v0.1`) and provides an interactive prompt for text generation.
+This loads the model from Hugging Face Hub (`Maynx/Rex-Instruct-v0.1`) and provides an interactive prompt for text generation. The `Rex-Instruct` variant has ~287M parameters.
 
 ### 2. Training
-I started by pre-training my model, REX, from scratch on a 350-million-token subset I built from C4 and Wikipedia. The training was done entirely on a GCP L4 GPU, which was perfect for leveraging its native Flash Attention support. I wrapped up the pre-training phase with a final validation loss of 3.04.
-
-To turn REX into a helpful assistant, I moved on to fine-tuning. I first used the Alpaca dataset to teach it the basic instruction-following format. Then, to really improve its response quality and teach it when to stop talking, I did a final fine-tuning run on the SlimOrca dataset.
+I started by pre-training REX from scratch on a 10B token subset derived from C4 and Wikipedia. For fine-tuning, I trained on the `smol-smoltlak` dataset (a small instructional dataset curated for demo purposes) using a single H100 instance on Modal. The final assistant model used for demos is `Maynx/Rex-Instruct-v0.1` (≈287M parameters).
 
 
 
@@ -109,18 +107,34 @@ python train/pretrain.py \
 ```
 
 #### Fine-tuning
+Fine-tune a pretrained model on instruction-following data. The `train/finetuned.py` script expects the following CLI flags (defaults shown):
 
-Fine-tune a pretrained model on instruction-following data:
+- `--model_path` (required)
+- `--dataset_name` (required)
+- `--tokenizer_name` (default: `gpt2`)
+- `--output_dir` (default: `./rex_finetuned`)
+- `--num_epochs` (default: `2`)
+- `--batch_size` (default: `4`)
+- `--learning_rate` (default: `2e-5`)
+- `--max_length` (default: `1024`)
+
+Example command using the script defaults but pointing to a dataset:
 
 ```bash
 python train/finetuned.py \
---model_path path/to/pretrain/model \
---dataset_name databricks/databricks-dolly-15k \
---tokenizer_name "Same tokenizer as the pretrained model" \
---num_epochs 3 \
---batch_size 16 \
---learning_rate 5e-5
+  --model_path path/to/pretrain/model \
+  --dataset_name your_org/your_dataset \
+  --tokenizer_name gpt2 \
+  --num_epochs 2 \
+  --batch_size 4 \
+  --learning_rate 2e-5 \
+  --max_length 1024
 ```
+
+Notes:
+- The script formats inputs to ChatML and writes training examples to the `text` field; the trainer configuration (`SFTConfig`) sets `dataset_text_field="text"`.
+- The tokenizer is extended with `<|im_start|>` and `<|im_end|>` special tokens and a `chat_template` is added (see `train/finetuned.py`).
+- The script will detect BF16 support and prefer BF16 on supported Ampere+ GPUs; otherwise it will use FP16 when available.
 
 
 ### 3. MLflow Experiment Tracking
@@ -144,17 +158,106 @@ cd inference
 python -m uvicorn inference:app --reload
 ```
 
-**Example Requests:**
+The API uses ChatML-style prompts and KV caching by default. Access interactive API docs at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+**Health Check:**
 
 ```bash
-# Generate text with a prompt
+curl http://localhost:8000/health
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "model": "Maynx/Rex-Instruct-v0.1",
+  "device": "cuda",
+  "dtype": "float16"
+}
+```
+
+**Generate Text:**
+
+```bash
 curl -X POST "http://localhost:8000/generate_text" \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "What is the capital of France?", "context": "","num_of_token_generated": 50}'
-
-# Expected output (actually produced by the model)
-{"generated_text":"The capital of France is Paris, which has a population of around 10 million people.","prompt":"What is the capital of France?","context":""}
+  -d '{
+    "prompt": "Say hello in one short sentence.",
+    "context": "",
+    "num_of_token_generated": 32,
+    "parameters": {
+      "max_new_tokens": 32,
+      "temperature": 0.3,
+      "top_k": 50,
+      "top_p": 0.95,
+      "repetition_penalty": 1.15
+    }
+  }'
 ```
+
+Response:
+```json
+{
+  "id": "3e7db802-e13d-4e33-b7c3-948d661a3a84",
+  "model": "Maynx/Rex-Instruct-v0.1",
+  "generated_text": "Hello! How are you doing today?",
+  "prompt": "Say hello in one short sentence.",
+  "context": "",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are REX. You must always identify yourself as REX when asked who you are. You are not Alex May. Alex May is your creator. REX is an AI assistant and does not have a physical body."
+    },
+    {
+      "role": "user",
+      "content": "Say hello in one short sentence."
+    },
+    {
+      "role": "assistant",
+      "content": "Hello! How are you doing today?"
+    }
+  ],
+  "latency_ms": 879.39,
+  "prompt_tokens": 97,
+  "completion_tokens": 12,
+  "total_tokens": 109
+}
+```
+
+**Using ChatML Messages Directly:**
+
+```bash
+curl -X POST "http://localhost:8000/generate_text" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is Python?"
+      }
+    ],
+    "parameters": {
+      "max_new_tokens": 50,
+      "temperature": 0.2
+    }
+  }'
+```
+
+**Request Parameters:**
+
+- `prompt` (optional): User prompt (ignored if `messages` is provided)
+- `context` (optional): Additional context to append to the prompt
+- `messages` (optional): List of ChatML messages (`{"role": "system|user|assistant", "content": "..."}`)
+- `system_prompt` (optional): Override the default system prompt
+- `num_of_token_generated` (optional): Shorthand for `parameters.max_new_tokens`
+- `parameters` (optional):
+  - `max_new_tokens` (default: 200): Max tokens to generate
+  - `temperature` (default: 0.3): Sampling temperature
+  - `top_k` (default: 50): Top-k filtering
+  - `top_p` (default: 0.95): Nucleus sampling
+  - `repetition_penalty` (default: 1.15): Repetition penalty
+
+**Note:** KV caching is always enabled by default for faster generation.
 
 ## Configuration
 
