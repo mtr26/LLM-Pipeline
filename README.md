@@ -107,7 +107,9 @@ python train/pretrain.py \
 ```
 
 #### Fine-tuning
-Fine-tune a pretrained model on instruction-following data. The `train/finetuned.py` script expects the following CLI flags (defaults shown):
+
+**Standard Fine-tuning** (SFT only):
+Use `train/finetuned.py` for basic instruction-following fine-tuning. The script expects the following CLI flags (defaults shown):
 
 - `--model_path` (required)
 - `--dataset_name` (required)
@@ -135,6 +137,43 @@ Notes:
 - The script formats inputs to ChatML and writes training examples to the `text` field; the trainer configuration (`SFTConfig`) sets `dataset_text_field="text"`.
 - The tokenizer is extended with `<|im_start|>` and `<|im_end|>` special tokens and a `chat_template` is added (see `train/finetuned.py`).
 - The script will detect BF16 support and prefer BF16 on supported Ampere+ GPUs; otherwise it will use FP16 when available.
+
+**Sparse Online Knowledge Distillation** (Efficient KD with teacher scheduling):
+
+For efficient large-scale training with knowledge distillation, use `train/kd.py` with sparse KD scheduling. This reduces teacher compute cost by 50-90% while preserving KD quality.
+
+Key features:
+- **Sparse scheduling**: Run KD every N steps (skip teacher on non-KD steps)
+- **Reduced-context KD**: Teacher processes shorter sequences (4x speedup for half-length)
+- **Dynamic schedules**: Adapt KD frequency over training phases
+- **Lightweight MiniLLM features**: Top-k logits, entropy-aware weighting, token subsampling
+
+Example (50% teacher compute reduction):
+
+```bash
+python train/kd.py \
+  --model_path "Maynx/Rex-Instruct-v0.1" \
+  --dataset_name your_org/dataset \
+  --kd_every_n_steps 2
+```
+
+Example (90% teacher compute reduction for long-context):
+
+```bash
+python train/kd.py \
+  --model_path "Maynx/Rex-Instruct-v0.1" \
+  --dataset_name your_org/dataset \
+  --train_seq_len 2048 \
+  --kd_seq_len 1024 \
+  --kd_every_n_steps 4 \
+  --kd_topk 32 \
+  --entropy_weighting "high_entropy" \
+  --kd_token_subsample_ratio 0.5
+```
+
+**Full Sparse KD Documentation**: See [SPARSE_KD_README.md](SPARSE_KD_README.md) for comprehensive guide, performance analysis, and 5+ example configurations.
+
+**Quick Reference**: `python train/example_sparse_kd.py` to see all feature examples.
 
 
 ### 3. MLflow Experiment Tracking
